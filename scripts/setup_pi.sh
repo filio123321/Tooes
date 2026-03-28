@@ -14,7 +14,7 @@
 set -euo pipefail
 
 HOST="${1:-team@tooes.local}"
-REMOTE_DIR="Tooes"
+REMOTE_DIR="${PI_DIR:-Tooes}"
 
 if [ -z "${PI_PASS:-}" ]; then
     echo "ERROR: Set PI_PASS environment variable with the Pi password."
