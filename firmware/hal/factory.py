@@ -2,10 +2,11 @@
 
 Environment variables
 ---------------------
-HAL_BACKEND          mock | replay | grgsm   (default: mock)
-HAL_REPLAY_PATH      Path to .jsonl file     (required when backend=replay)
-HAL_GRGSM_SCANNER_CMD  Full shell command     (required when backend=grgsm)
-HAL_GRGSM_N_SCANS   Number of scan invocations per sweep (default: 36)
+HAL_BACKEND            mock | replay | grgsm   (default: mock)
+HAL_REPLAY_PATH        Path to .jsonl file     (required when backend=replay)
+HAL_GRGSM_SCANNER_CMD  Full shell command      (required when backend=grgsm)
+HAL_GRGSM_N_SCANS     Number of scan invocations per sweep (default: 36)
+HAL_ROTATION           stub | qmc5883l         (default: stub; used by grgsm backend)
 """
 
 from __future__ import annotations
@@ -42,8 +43,19 @@ def get_sweep_source() -> SweepSampleSource:
         n_scans = int(os.environ.get("HAL_GRGSM_N_SCANS", "36"))
 
         from firmware.hal.grgsm_scanner import GrgsmScannerSource
-        from firmware.hal._stub_rotation import StubRotationReader
-        rotation = StubRotationReader()
+        rotation = _get_rotation_reader()
         return GrgsmScannerSource(cmd=cmd, rotation=rotation, n_scans=n_scans)
 
     raise ValueError(f"Unknown HAL_BACKEND: {backend!r} (expected mock|replay|grgsm)")
+
+
+def _get_rotation_reader():
+    """Return a RotationReader based on ``HAL_ROTATION`` env var."""
+    kind = os.environ.get("HAL_ROTATION", "stub").lower()
+    if kind == "stub":
+        from firmware.hal._stub_rotation import StubRotationReader
+        return StubRotationReader()
+    if kind == "qmc5883l":
+        from firmware.hal.qmc5883l import QMC5883LRotationReader
+        return QMC5883LRotationReader()
+    raise ValueError(f"Unknown HAL_ROTATION: {kind!r} (expected stub|qmc5883l)")
