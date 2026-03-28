@@ -1,20 +1,34 @@
 #!/usr/bin/env python3
-import os
-import sys
-import time
 import math
 import logging
-from io import BytesIO
+import sys
+import time
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 from gpiozero import RotaryEncoder, Button
 
-# Waveshare library path
-picdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'pic')
-libdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'lib')
-if os.path.exists(libdir):
-    sys.path.append(libdir)
+BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent
+WAVESHARE_LIB = (
+    REPO_ROOT
+    / "external"
+    / "waveshare-epd"
+    / "RaspberryPi_JetsonNano"
+    / "python"
+    / "lib"
+)
+TILE_ROOT = REPO_ROOT / "firmware" / "offline_tiles"
+
+if not WAVESHARE_LIB.exists():
+    raise FileNotFoundError(
+        f"Waveshare lib not found: {WAVESHARE_LIB}\n"
+        "From repo root run:\n"
+        "  git submodule update --init --recursive"
+    )
+
+if str(WAVESHARE_LIB) not in sys.path:
+    sys.path.insert(0, str(WAVESHARE_LIB))
 
 from waveshare_epd import epd2in9_V2
 
@@ -25,11 +39,6 @@ logging.basicConfig(level=logging.INFO)
 # =========================================================
 EPD_WIDTH = 296
 EPD_HEIGHT = 128
-
-# =========================================================
-# Offline tile folder
-# =========================================================
-TILE_ROOT = Path.cwd() / ".." / "firmware" / "offline_tiles"
 
 # =========================================================
 # Map / location settings

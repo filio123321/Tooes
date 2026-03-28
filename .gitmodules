@@ -1,0 +1,3 @@
+[submodule "external/waveshare-epd"]
+	path = external/waveshare-epd
+	url = https://github.com/waveshareteam/e-Paper.git

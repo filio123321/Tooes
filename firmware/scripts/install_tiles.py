@@ -22,8 +22,9 @@ RADIUS_KM = 100
 MIN_ZOOM = 10
 MAX_ZOOM = 16
 
-# Creates ../offline_tiles relative to the current directory
-OUTPUT_ROOT = Path.cwd() / ".." / "offline_tiles"
+SCRIPT_DIR = Path(__file__).resolve().parent
+FIRMWARE_DIR = SCRIPT_DIR.parent
+OUTPUT_ROOT = FIRMWARE_DIR / "offline_tiles"
 
 # IMPORTANT:
 # Use a tile source/provider that explicitly allows offline/bulk download.
