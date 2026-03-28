@@ -27,6 +27,19 @@ from firmware.ui.icons import (
 
 _font = ImageFont.load_default()
 
+# Larger font for tutorial/boot screens (Pillow 10.1+, fallback to default)
+try:
+    _font_lg = ImageFont.load_default(size=16)
+    _font_md = ImageFont.load_default(size=12)
+except TypeError:
+    # Older Pillow without size param — try system truetype
+    try:
+        _font_lg = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
+        _font_md = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
+    except OSError:
+        _font_lg = _font
+        _font_md = _font
+
 
 # -------------------------------------------------------------------
 # Shared data model
@@ -52,9 +65,9 @@ def render_boot(w: int, h: int) -> Image.Image:
     draw = ImageDraw.Draw(img)
     draw.rectangle((0, 0, w - 1, h - 1), outline=0, width=2)
 
-    _center_text(draw, w, 25, "T O O E S")
-    _center_text(draw, w, 45, "Passive RF Navigator")
-    _center_text(draw, w, 75, "Initializing hardware...")
+    _center_text(draw, w, 20, "T O O E S", font=_font_lg)
+    _center_text(draw, w, 45, "Passive RF Navigator", font=_font_md)
+    _center_text(draw, w, 75, "Initializing hardware...", font=_font_md)
     return img
 
 
@@ -66,24 +79,20 @@ _TUTORIAL_PAGES = [
     {
         "title": "HOW THIS WORKS",
         "lines": [
-            "This device passively listens",
-            "to cell tower broadcasts to",
-            "estimate your location.",
+            "Passively listens to cell",
+            "tower broadcasts to find",
+            "your location.",
             "",
-            "No GPS, SIM, or network needed.",
-            "You are invisible - the device",
-            "never transmits any signal.",
+            "No GPS, SIM, or network.",
+            "Completely invisible.",
         ],
     },
     {
         "title": "READING THE MAP",
         "lines": [
-            "(+)  = Your position (rotates",
-            "       with compass heading)",
-            "",
-            "/|\\  = Cell tower",
-            "",
-            " >>  = Nearest tower direction",
+            "(+) = Your position",
+            "/|\\ = Cell tower",
+            " >> = Nearest tower",
             "",
             "Zoom: rotate dial",
         ],
@@ -91,13 +100,12 @@ _TUTORIAL_PAGES = [
     {
         "title": "READY TO SCAN",
         "lines": [
-            "The device will now scan for",
-            "cell towers in range.",
+            "Scanning for cell towers.",
             "",
             "Slowly rotate 360 degrees",
-            "while holding the device level.",
+            "while holding device level.",
             "",
-            "More towers = better accuracy.",
+            "More towers = better fix.",
         ],
     },
 ]
@@ -112,17 +120,17 @@ def render_tutorial(w: int, h: int, page: int) -> Image.Image:
     draw.rectangle((0, 0, w - 1, h - 1), outline=0)
 
     # Header bar (inverted)
-    draw.rectangle((0, 0, w - 1, 14), fill=0)
-    draw.text((4, 2), data["title"], font=_font, fill=255)
+    draw.rectangle((0, 0, w - 1, 18), fill=0)
+    draw.text((4, 1), data["title"], font=_font_lg, fill=255)
     page_str = f"{page + 1}/{len(_TUTORIAL_PAGES)}"
-    pw = draw.textlength(page_str, font=_font)
-    draw.text((w - pw - 4, 2), page_str, font=_font, fill=255)
+    pw = draw.textlength(page_str, font=_font_md)
+    draw.text((w - pw - 4, 3), page_str, font=_font_md, fill=255)
 
     # Body
-    y = 20
+    y = 24
     for line in data["lines"]:
-        draw.text((8, y), line, font=_font, fill=0)
-        y += 12
+        draw.text((8, y), line, font=_font_md, fill=0)
+        y += 14
 
     # Footer
     footer = (
@@ -130,8 +138,8 @@ def render_tutorial(w: int, h: int, page: int) -> Image.Image:
         if page >= len(_TUTORIAL_PAGES) - 1
         else "Press to continue >>"
     )
-    fw = draw.textlength(footer, font=_font)
-    draw.text((w - fw - 8, h - 14), footer, font=_font, fill=0)
+    fw = draw.textlength(footer, font=_font_md)
+    draw.text((w - fw - 8, h - 16), footer, font=_font_md, fill=0)
     return img
 
 
@@ -293,6 +301,7 @@ def render_map(
 # Helpers
 # -------------------------------------------------------------------
 
-def _center_text(draw, width, y, text):
-    tw = draw.textlength(text, font=_font)
-    draw.text(((width - tw) / 2, y), text, font=_font, fill=0)
+def _center_text(draw, width, y, text, font=None):
+    f = font or _font
+    tw = draw.textlength(text, font=f)
+    draw.text(((width - tw) / 2, y), text, font=f, fill=0)
