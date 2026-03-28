@@ -21,3 +21,10 @@ class StubTiltReader:
 
     def read_pitch_roll(self) -> tuple[float, float]:
         return (0.0, 0.0)
+
+
+class StubAccelerationReader:
+    """Reports stationary (gravity pointing down, no lateral acceleration)."""
+
+    def read_accel_g(self) -> tuple[float, float, float]:
+        return (0.0, 0.0, 1.0)

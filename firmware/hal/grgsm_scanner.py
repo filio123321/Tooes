@@ -80,6 +80,17 @@ def run_scanner(cmd: str, timeout: float = 60.0) -> Dict[CellKey, float]:
     return parse_scanner_output(result.stdout)
 
 
+class GrgsmCellReader:
+    """CellRssiReader adapter that runs grgsm_scanner once per ``read_cells`` call."""
+
+    def __init__(self, cmd: str, timeout: float = 60.0) -> None:
+        self.cmd = cmd
+        self.timeout = timeout
+
+    def read_cells(self) -> Dict[CellKey, float]:
+        return run_scanner(self.cmd, self.timeout)
+
+
 class GrgsmScannerSource:
     """SweepSampleSource that repeatedly invokes grgsm_scanner during a sweep.
 

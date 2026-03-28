@@ -36,6 +36,13 @@ class TiltReader(Protocol):
 
 
 @runtime_checkable
+class AccelerationReader(Protocol):
+    """Returns acceleration in g-force units (1.0 ≈ 9.81 m/s²)."""
+
+    def read_accel_g(self) -> tuple[float, float, float]: ...
+
+
+@runtime_checkable
 class DisplaySink(Protocol):
     """Stub for e-ink or other display output."""
 

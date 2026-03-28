@@ -66,6 +66,11 @@ class MPU6050TiltReader:
         az = _to_signed_16(data[4], data[5])
         return ax, ay, az
 
+    def read_accel_g(self) -> tuple[float, float, float]:
+        """Return (ax, ay, az) in g-force units (1.0 ≈ 9.81 m/s²)."""
+        ax, ay, az = self._read_accel_raw()
+        return ax / _ACCEL_SCALE_2G, ay / _ACCEL_SCALE_2G, az / _ACCEL_SCALE_2G
+
     def read_pitch_roll(self) -> tuple[float, float]:
         """Return (pitch, roll) in degrees from the accelerometer gravity vector."""
         ax, ay, az = self._read_accel_raw()
