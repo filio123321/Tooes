@@ -1,62 +1,105 @@
 import csv
 import sys
+import logging
 from pathlib import Path
+from typing import Optional, Dict, Union
 
-def lookup_tower(mcc, mnc, lac, cell_id):
-    """
-    Looks up a cell tower in the local OpenCelliD database (CSV) stored in a 'data' directory.
-    OpenCelliD CSV format (typical columns):
-    radio, mcc, net (mnc), area (lac), cell (cell_id), unit, lon, lat, range, samples, changeable, created, updated, averageSignal
-    """
-    # Define the directory and file path relative to this script
-    script_path = Path(__file__).resolve().parent
-    data_dir = script_path / "data"
-    csv_filename = f"{mcc}.csv"
-    csv_path = data_dir / csv_filename
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
-    # If the file doesn't exist, crash with a helpful message
+def lookup_tower(
+    mcc: Union[int, str], 
+    mnc: Union[int, str], 
+    lac: Union[int, str], 
+    cell_id: Union[int, str]
+) -> Optional[Dict[str, float]]:
+    """
+    Looks up a cell tower's geographical coordinates in a local OpenCelliD CSV database.
+
+    The function searches for a CSV file named after the Mobile Country Code (MCC) 
+    within a 'data' directory located in the same folder as this script.
+
+    Args:
+        mcc: Mobile Country Code (e.g., 284 for Bulgaria Vivacom).
+        mnc: Mobile Network Code (e.g., 70).
+        lac: Location Area Code (e.g., 8240).
+        cell_id: Cell Identity (e.g., 4521).
+
+    Returns:
+        A dictionary containing 'lat' and 'lon' as floats if the tower is found.
+        Returns None if the tower is not present in the database.
+
+    Raises:
+        SystemExit: If the required CSV database file is missing or unreadable.
+    """
+    # Resolve paths relative to the script location
+    script_dir = Path(__file__).resolve().parent
+    data_dir = script_dir / "data"
+    csv_path = data_dir / f"{mcc}.csv"
+
+    # Strict check for database existence
     if not csv_path.exists():
-        print(f"\nCRITICAL ERROR: Database file for country code {mcc} not found.")
-        print(f"You must download the OpenCelliD CSV file for MCC {mcc} and save it as:")
-        print(f"  {csv_path}")
-        print("\nNote: You can download tower data from https://opencellid.org/ or relevant data providers.")
+        error_msg = (
+            f"\nCRITICAL ERROR: Database file for country code {mcc} not found.\n"
+            f"Expected location: {csv_path}\n"
+            "Please download the OpenCelliD CSV for this MCC from https://opencellid.org/"
+        )
+        print(error_msg, file=sys.stderr)
         sys.exit(1)
 
-    # Perform the lookup in the CSV file
     try:
-        with open(csv_path, mode='r', encoding='utf-8') as f:
+        # Convert search parameters to integers once for efficient comparison
+        target_mcc = int(mcc)
+        target_mnc = int(mnc)
+        target_lac = int(lac)
+        target_cell = int(cell_id)
+
+        with open(csv_path, mode='r', encoding='utf-8', newline='') as f:
+            # OpenCelliD CSVs typically have headers. net=mnc, area=lac, cell=cell_id
             reader = csv.DictReader(f)
+            
             for row in reader:
-                # Compare as integers to avoid formatting issues
                 try:
-                    if (int(row['mcc']) == int(mcc) and
-                        int(row['net']) == int(mnc) and
-                        int(row['area']) == int(lac) and
-                        int(row['cell']) == int(cell_id)):
+                    # Validate row content before comparison
+                    if (int(row['mcc']) == target_mcc and
+                        int(row['net']) == target_mnc and
+                        int(row['area']) == target_lac and
+                        int(row['cell']) == target_cell):
+                        
                         return {
                             "lat": float(row['lat']),
                             "lon": float(row['lon'])
                         }
-                except (ValueError, KeyError):
-                    # Skip malformed rows or rows missing keys
+                except (ValueError, KeyError, TypeError):
+                    # Silently skip rows with missing columns or non-numeric data
                     continue
+
+    except PermissionError:
+        print(f"CRITICAL ERROR: Permission denied when accessing {csv_path}", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
-        print(f"An error occurred while reading the database: {e}")
+        print(f"CRITICAL ERROR: Unexpected error reading database: {e}", file=sys.stderr)
         sys.exit(1)
 
     return None
 
 if __name__ == "__main__":
-    # Test data from prompt: (Cell #4521, LAC #8240, MCC 389, MNC 70)
-    cell_id = 4521
-    lac = 8240
-    mcc = 389
-    mnc = 70
+    # Example evaluation with some random sample data from the SDR demodulator
+    # (Cell #4521, LAC #8240, MCC 389, MNC 70)
+    test_params = {
+        "mcc": 284,
+        "mnc": 70,
+        "lac": 8240,
+        "cell_id": 4521
+    }
 
-    print(f"Looking up Cell Tower: MCC={mcc}, MNC={mnc}, LAC={lac}, CellID={cell_id}...")
-    tower = lookup_tower(mcc, mnc, lac, cell_id)
+    print(f"--- OpenCelliD Lookup Evaluation ---")
+    print(f"Target: MCC={test_params['mcc']}, MNC={test_params['mnc']}, "
+          f"LAC={test_params['lac']}, CellID={test_params['cell_id']}")
+
+    result = lookup_tower(**test_params)
     
-    if tower:
-        print(f"SUCCESS: Tower found at Lat {tower['lat']}, Lon {tower['lon']}")
+    if result:
+        print(f"RESULT: Found at Latitude {result['lat']}, Longitude {result['lon']}")
     else:
-        print("NOT FOUND: This tower is not in the local database.")
+        print("RESULT: Tower not found in the local database.")
