@@ -105,9 +105,9 @@ def _test_poc():
     # (Cell #4521, LAC #8240, MCC 389, MNC 70)
     test_params = {
         "mcc": 284,
-        "mnc": 70,
-        "lac": 8240,
-        "cell_id": 4521
+        "mnc": 3,
+        "lac": 3400,
+        "cell_id": 15023
     }
 
     print(f"--- OpenCelliD Lookup Evaluation ---")
