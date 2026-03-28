@@ -1,6 +1,18 @@
 # firmware/
 
-Python code that runs on the Raspberry Pi (or a laptop during development): GSM cell observation via `grgsm_scanner` + SoapySDR, OpenCellID tower lookup, RSSI-based trilateration, and e-ink display output.
+Firmware-specific reference for the Raspberry Pi application, HAL backends, and
+supporting scripts.
+
+For project-wide documentation, start at:
+
+- `README.md`
+- `docs/architecture.md`
+- `docs/algorithms/motion-estimation.md`
+- `docs/algorithms/rf-localization.md`
+
+Python code that runs on the Raspberry Pi (or a laptop during development):
+GSM cell observation via `grgsm_scanner` + SoapySDR, OpenCellID tower lookup,
+heuristic RF position estimation, and e-ink display output.
 
 ## Project structure
 
@@ -88,7 +100,8 @@ Each line in a `.jsonl` sweep file is a self-contained JSON object:
 {"schema_version": 1, "t": 0.0, "azimuth_deg": 0.0, "cells": [{"mcc": 284, "mnc": 1, "lac": 1000, "ci": 101, "rssi_dbm": -50.0}]}
 ```
 
-The `schema_version` field guards against silent format drift between the recorder and the replay/trilateration code.
+The `schema_version` field guards against silent format drift between the
+recorder and the replay/localization code.
 
 ## Component factories
 
