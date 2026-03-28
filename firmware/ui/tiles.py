@@ -16,6 +16,19 @@ TILE_ROOT = _FIRMWARE_DIR / "offline_tiles"
 _font = ImageFont.load_default()
 
 
+def get_tile_zoom_range():
+    """Return (min_zoom, max_zoom) available in the offline tile directory."""
+    if not TILE_ROOT.exists():
+        return MIN_ZOOM, MAX_ZOOM
+    zooms = [
+        int(d.name) for d in TILE_ROOT.iterdir()
+        if d.is_dir() and d.name.isdigit()
+    ]
+    if not zooms:
+        return MIN_ZOOM, MAX_ZOOM
+    return min(zooms), max(zooms)
+
+
 def _make_missing_tile(z, x, y):
     """Placeholder tile when the real one is not on disk."""
     img = Image.new("L", (TILE_SIZE, TILE_SIZE), 255)

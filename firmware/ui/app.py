@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from firmware.ui.geo import MIN_ZOOM, MAX_ZOOM, clamp
+from firmware.ui.tiles import get_tile_zoom_range
 from firmware.ui.screens import (
     DiscoveredTower,
     render_boot,
@@ -45,7 +46,8 @@ class App:
     def __init__(self):
         self.screen: Screen = Screen.BOOT
         self.tutorial_page: int = 0
-        self.zoom: int = DEFAULT_ZOOM
+        self._tile_min_zoom, self._tile_max_zoom = get_tile_zoom_range()
+        self.zoom: int = clamp(DEFAULT_ZOOM, self._tile_min_zoom, self._tile_max_zoom)
         self.heading_deg: float = 0.0
         self.user_lat: float = 42.0202  # fallback until trilateration runs
         self.user_lon: float = 23.0918
@@ -215,20 +217,20 @@ class App:
         if not self._encoder:
             return
         new_zoom = clamp(
-            DEFAULT_ZOOM + self._encoder.steps, MIN_ZOOM, MAX_ZOOM
+            DEFAULT_ZOOM + self._encoder.steps,
+            self._tile_min_zoom,
+            self._tile_max_zoom,
         )
         if new_zoom != self.zoom:
             self.zoom = new_zoom
             self._needs_redraw = True
-            # Clamp encoder step range
-            if self.zoom == MIN_ZOOM:
-                self._encoder.steps = max(
-                    self._encoder.steps, MIN_ZOOM - DEFAULT_ZOOM
-                )
-            elif self.zoom == MAX_ZOOM:
-                self._encoder.steps = min(
-                    self._encoder.steps, MAX_ZOOM - DEFAULT_ZOOM
-                )
+        # Hard-clamp encoder steps so it stops at the limits
+        min_steps = self._tile_min_zoom - DEFAULT_ZOOM
+        max_steps = self._tile_max_zoom - DEFAULT_ZOOM
+        if self._encoder.steps < min_steps:
+            self._encoder.steps = min_steps
+        elif self._encoder.steps > max_steps:
+            self._encoder.steps = max_steps
 
     # ----- rendering -----
 

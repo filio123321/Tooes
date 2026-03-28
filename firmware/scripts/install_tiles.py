@@ -82,6 +82,29 @@ def tile_range_for_bbox(min_lat, min_lon, max_lat, max_lon, zoom):
     return min_x, max_x, min_y, max_y
 
 
+# Display size — ensure we always download enough tiles to fill the screen
+DISPLAY_W = 296
+DISPLAY_H = 128
+TILE_SIZE = 256
+
+
+def viewport_tile_range(lat, lon, zoom):
+    """Return the tile range needed to fill the e-paper display at this zoom."""
+    n = 2 ** zoom
+    cx, cy = latlon_to_tile(lat, lon, zoom)
+
+    # How many tiles the display spans in each direction from center
+    half_w = math.ceil(DISPLAY_W / 2 / TILE_SIZE) + 1
+    half_h = math.ceil(DISPLAY_H / 2 / TILE_SIZE) + 1
+
+    min_x = max(0, int(math.floor(cx)) - half_w)
+    max_x = min(n - 1, int(math.floor(cx)) + half_w)
+    min_y = max(0, int(math.floor(cy)) - half_h)
+    max_y = min(n - 1, int(math.floor(cy)) + half_h)
+
+    return min_x, max_x, min_y, max_y
+
+
 def ensure_png(content: bytes):
     img = Image.open(BytesIO(content))
     return img.convert("RGBA")
@@ -133,7 +156,15 @@ def main():
     ranges = {}
 
     for z in range(MIN_ZOOM, MAX_ZOOM + 1):
-        min_x, max_x, min_y, max_y = tile_range_for_bbox(min_lat, min_lon, max_lat, max_lon, z)
+        # Radius-based range
+        r_min_x, r_max_x, r_min_y, r_max_y = tile_range_for_bbox(min_lat, min_lon, max_lat, max_lon, z)
+        # Viewport-based range (ensures display is always filled)
+        v_min_x, v_max_x, v_min_y, v_max_y = viewport_tile_range(CENTER_LAT, CENTER_LON, z)
+        # Merge: take the union of both ranges
+        min_x = min(r_min_x, v_min_x)
+        max_x = max(r_max_x, v_max_x)
+        min_y = min(r_min_y, v_min_y)
+        max_y = max(r_max_y, v_max_y)
         count = (max_x - min_x + 1) * (max_y - min_y + 1)
         ranges[z] = (min_x, max_x, min_y, max_y, count)
         total_tiles += count
