@@ -197,7 +197,24 @@ def trilaterate(
         return None
 
 
+def _best_per_site(measurements: list[Measurement]) -> list[Measurement]:
+    """Keep the strongest measurement from each unique transmitter site.
+
+    Multiple transmitters sharing the same physical tower add no new geometric
+    information and bias the solver toward that location.  Grouping by site
+    (lat/lon rounded to ~100 m) and retaining the highest RSSI measurement
+    gives each distinct location exactly one constraint.
+    """
+    best: dict[tuple[float, float], Measurement] = {}
+    for m in measurements:
+        key = (round(m.lat, 3), round(m.lon, 3))
+        if key not in best or m.rssi_dbm > best[key].rssi_dbm:
+            best[key] = m
+    return list(best.values())
+
+
 def _trilaterate(measurements: list[Measurement]) -> tuple[float, float, float] | None:
+    measurements = _best_per_site(measurements)
     if len(measurements) < _MIN_SOURCES:
         return None
 

@@ -19,10 +19,10 @@ class GainStrategy:
 
 
 GAIN_STRATEGIES: dict[str, GainStrategy] = {
-    "FM":    GainStrategy(target_lo=-75.0, target_hi=-55.0, start_gain=50.0),
-    "VOR":   GainStrategy(target_lo=-85.0, target_hi=-65.0, start_gain=70.0),
-    "DAB":   GainStrategy(target_lo=-80.0, target_hi=-60.0, start_gain=60.0),
-    "DVB-T": GainStrategy(target_lo=-75.0, target_hi=-55.0, start_gain=55.0),
+    "FM":    GainStrategy(target_lo=-75.0, target_hi=-55.0, start_gain=40.0),
+    "VOR":   GainStrategy(target_lo=-85.0, target_hi=-65.0, start_gain=45.0),
+    "DAB":   GainStrategy(target_lo=-80.0, target_hi=-60.0, start_gain=40.0),
+    "DVB-T": GainStrategy(target_lo=-75.0, target_hi=-55.0, start_gain=40.0),
     "GSM":   GainStrategy(target_lo=-55.0, target_hi=-35.0, start_gain=20.0),
 }
 
@@ -44,15 +44,17 @@ class GainController:
 
         gain = strategy.start_gain
         midpoint = (strategy.target_lo + strategy.target_hi) / 2.0
+        last_gain = gain
         p_measured = 0.0
         true_power_dbm = 0.0
 
         for _ in range(_AGC_STEPS):
             receiver.set_gain(gain)
+            last_gain = gain  # record the gain actually applied for this read
             p_measured = receiver.read_power_dbm()
             # Normalisation: remove receiver gain to recover true received power.
             # This formula appears exactly once in the codebase.
-            true_power_dbm = p_measured - gain
+            true_power_dbm = p_measured - last_gain
 
             if true_power_dbm < entry.min_rssi_dbm:
                 return None  # signal absent / below noise floor
@@ -69,11 +71,12 @@ class GainController:
                     lon=entry.lon,
                     power_w=entry.power_w,
                     antenna_gain_dbi=entry.antenna_gain_dbi,
-                    gain_used=gain,
+                    gain_used=last_gain,
                     best_effort=False,
                 )
-            # Steer gain so that ADC level converges towards the midpoint of the target window
-            gain += midpoint - p_measured
+            # Steer gain towards midpoint, bounded by step_db to avoid large jumps
+            delta = midpoint - p_measured
+            gain += max(-strategy.step_db, min(strategy.step_db, delta))
 
         # Loop exhausted without settling — signal present but gain is unstable
         return Measurement(
@@ -85,6 +88,6 @@ class GainController:
             lon=entry.lon,
             power_w=entry.power_w,
             antenna_gain_dbi=entry.antenna_gain_dbi,
-            gain_used=gain,
+            gain_used=last_gain,
             best_effort=True,
         )
