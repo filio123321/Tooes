@@ -3,3 +3,4 @@ Pillow
 gpiozero
 spidev
 RPi.GPIO
+smbus2
