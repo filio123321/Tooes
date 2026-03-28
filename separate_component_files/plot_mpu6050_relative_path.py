@@ -57,6 +57,8 @@ class PathEstimate:
     heading_mode: str
     step_threshold_g: float
     turn_threshold_dps: float
+    snap_turn_deg: float
+    snap_turn_source: str
     step_indices: list[int]
     step_times_s: list[float]
     step_headings_deg: list[float]
@@ -141,9 +143,8 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--snap-turn-deg",
-        type=float,
-        default=0.0,
-        help="Snap each detected turn to the nearest multiple of this amount, for example 90.",
+        default="auto",
+        help="Use auto, off, or a number like 90 to snap detected turns.",
     )
     parser.add_argument(
         "--start-seconds",
@@ -169,8 +170,13 @@ def _parse_args() -> argparse.Namespace:
         parser.error("--turn-rate-threshold-dps must be > 0 when provided")
     if args.turn_smoothing_window <= 0:
         parser.error("--turn-smoothing-window must be > 0")
-    if args.snap_turn_deg < 0:
-        parser.error("--snap-turn-deg must be >= 0")
+    snap_text = str(args.snap_turn_deg).strip().lower()
+    if snap_text not in {"auto", "off", "none"}:
+        try:
+            if float(args.snap_turn_deg) < 0:
+                parser.error("--snap-turn-deg must be >= 0")
+        except ValueError:
+            parser.error("--snap-turn-deg must be auto, off, none, or a number")
 
     return args
 
@@ -379,6 +385,54 @@ def _turn_segments(mask: list[bool]) -> list[tuple[int, int]]:
     return segments
 
 
+def _resolve_snap_turn_deg(
+    raw_turn_deltas_deg: list[float],
+    snap_turn_arg: str,
+) -> tuple[float, str]:
+    snap_text = str(snap_turn_arg).strip().lower()
+    if snap_text in {"off", "none", "0", "0.0"}:
+        return 0.0, "disabled"
+
+    if snap_text != "auto":
+        return float(snap_turn_arg), "manual"
+
+    abs_deltas = [abs(delta) for delta in raw_turn_deltas_deg if abs(delta) >= 15.0]
+    if not abs_deltas:
+        return 0.0, "auto-none"
+
+    candidates = [45.0, 60.0, 90.0, 120.0, 135.0, 180.0]
+    best_candidate = 0.0
+    best_score = float("inf")
+    best_avg_error = float("inf")
+    best_max_error = float("inf")
+
+    for candidate in candidates:
+        multipliers = [max(1, round(delta / candidate)) for delta in abs_deltas]
+        errors = [
+            abs(delta - (candidate * multiplier))
+            for delta, multiplier in zip(abs_deltas, multipliers)
+        ]
+        avg_error = statistics.fmean(errors)
+        max_error = max(errors)
+        mean_multiplier = statistics.fmean(multipliers)
+        score = avg_error + (candidate * 0.25 * (mean_multiplier - 1.0))
+        if score < best_score:
+            best_score = score
+            best_candidate = candidate
+            best_avg_error = avg_error
+            best_max_error = max_error
+
+    if best_candidate <= 0:
+        return 0.0, "auto-none"
+
+    avg_limit = max(10.0, best_candidate * 0.15)
+    max_limit = max(18.0, best_candidate * 0.25)
+    if best_avg_error <= avg_limit and best_max_error <= max_limit:
+        return best_candidate, "auto"
+
+    return 0.0, "auto-none"
+
+
 def _build_heading(
     data: ImuPathInput,
     yaw_rate_dps: list[float],
@@ -386,8 +440,8 @@ def _build_heading(
     turn_threshold_dps: float,
     invert_heading: bool,
     heading_offset_deg: float,
-    snap_turn_deg: float,
-) -> tuple[list[float], list[float], list[TurnSegment]]:
+    snap_turn_arg: str,
+) -> tuple[list[float], list[float], list[TurnSegment], float, str]:
     mask = _turn_mask(yaw_rate_smooth_dps, turn_threshold_dps)
     filtered_yaw_rate_dps = [
         rate if active else 0.0
@@ -401,6 +455,15 @@ def _build_heading(
         )
 
     segments = _turn_segments(mask)
+    raw_turn_deltas_deg: list[float] = []
+    for start_index, end_index in segments:
+        segment_start_heading = raw_turn_heading_deg[start_index - 1] if start_index > 0 else 0.0
+        raw_turn_deltas_deg.append(raw_turn_heading_deg[end_index] - segment_start_heading)
+
+    snap_turn_deg, snap_turn_source = _resolve_snap_turn_deg(
+        raw_turn_deltas_deg=raw_turn_deltas_deg,
+        snap_turn_arg=snap_turn_arg,
+    )
     turn_segments: list[TurnSegment] = []
     heading_deg = [0.0 for _ in data.time_s]
     current_heading = 0.0
@@ -440,7 +503,7 @@ def _build_heading(
         heading_offset_deg + (direction_sign * value)
         for value in heading_deg
     ]
-    return heading_deg, filtered_yaw_rate_dps, turn_segments
+    return heading_deg, filtered_yaw_rate_dps, turn_segments, snap_turn_deg, snap_turn_source
 
 
 def _estimate_path(
@@ -448,6 +511,8 @@ def _estimate_path(
     heading_mode: str,
     step_threshold_g: float,
     turn_threshold_dps: float,
+    snap_turn_deg: float,
+    snap_turn_source: str,
     step_indices: list[int],
     yaw_rate_dps: list[float],
     yaw_rate_smooth_dps: list[float],
@@ -479,6 +544,8 @@ def _estimate_path(
         heading_mode=heading_mode,
         step_threshold_g=step_threshold_g,
         turn_threshold_dps=turn_threshold_dps,
+        snap_turn_deg=snap_turn_deg,
+        snap_turn_source=snap_turn_source,
         step_indices=step_indices,
         step_times_s=step_times_s,
         step_headings_deg=step_headings_deg,
@@ -656,19 +723,22 @@ def _plot(
             f"mode={path.heading_mode} steps={len(path.step_indices)} "
             f"path={_path_length_m(path):.2f}m net={net_distance:.2f}m "
             f"end=({path.x_m[-1]:.2f},{path.y_m[-1]:.2f})m "
-            f"step_thr={path.step_threshold_g:.3f}g turn_thr={path.turn_threshold_dps:.1f}dps"
+            f"step_thr={path.step_threshold_g:.3f}g turn_thr={path.turn_threshold_dps:.1f}dps "
+            f"snap={path.snap_turn_source}:{path.snap_turn_deg:.0f}"
         ),
         fontsize=13,
     )
 
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150)
-    print(f"Saved path plot to {output_path}")
+    saved_path = output_path.resolve()
+    fig.savefig(saved_path, dpi=150)
+    print(f"Saved path plot to {saved_path}")
     print(f"Heading mode: {path.heading_mode}")
     print(f"Detected steps: {len(path.step_indices)}")
     print(f"Step threshold: {path.step_threshold_g:.4f} g")
     print(f"Turn threshold: {path.turn_threshold_dps:.2f} dps")
+    print(f"Turn snapping: {path.snap_turn_source} ({path.snap_turn_deg:.1f} deg)")
     print(f"Estimated path length: {_path_length_m(path):.2f} m")
     print(f"Estimated net displacement: {net_distance:.2f} m")
     for index, segment in enumerate(path.turn_segments, start=1):
@@ -715,20 +785,22 @@ def main() -> int:
         threshold_g=step_threshold_g,
         min_step_seconds=args.min_step_seconds,
     )
-    heading_deg, yaw_rate_filtered_dps, turn_segments = _build_heading(
+    heading_deg, yaw_rate_filtered_dps, turn_segments, snap_turn_deg, snap_turn_source = _build_heading(
         data=data,
         yaw_rate_dps=yaw_rate_dps,
         yaw_rate_smooth_dps=yaw_rate_smooth_dps,
         turn_threshold_dps=turn_threshold_dps,
         invert_heading=args.invert_heading,
         heading_offset_deg=args.heading_offset_deg,
-        snap_turn_deg=args.snap_turn_deg,
+        snap_turn_arg=args.snap_turn_deg,
     )
     path = _estimate_path(
         data=data,
         heading_mode=heading_mode,
         step_threshold_g=step_threshold_g,
         turn_threshold_dps=turn_threshold_dps,
+        snap_turn_deg=snap_turn_deg,
+        snap_turn_source=snap_turn_source,
         step_indices=step_indices,
         yaw_rate_dps=yaw_rate_dps,
         yaw_rate_smooth_dps=yaw_rate_smooth_dps,
