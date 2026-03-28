@@ -14,6 +14,7 @@ firmware/
 │   ├── replay.py           # JsonlReplaySource — replay a recorded .jsonl sweep file
 │   ├── grgsm_scanner.py    # Parse grgsm_scanner stdout, run it as subprocess
 │   ├── factory.py          # get_sweep_source() — env-driven backend selection
+│   ├── qmc5883l.py         # QMC5883L magnetometer RotationReader (real hardware, I2C)
 │   └── _stub_rotation.py   # Placeholder RotationReader (increments azimuth each call)
 │
 ├── tests/
@@ -81,3 +82,64 @@ Each line in a `.jsonl` sweep file is a self-contained JSON object:
 ```
 
 The `schema_version` field guards against silent format drift between the recorder and the replay/trilateration code.
+
+## Rotation reader
+
+The `HAL_ROTATION` env var selects how azimuth is read (used by the `grgsm` backend):
+
+| `HAL_ROTATION` | What it does |
+|----------------|--------------|
+| `stub` (default) | Increments azimuth by a fixed step each call (no hardware) |
+| `qmc5883l` | Reads heading from a QMC5883L magnetometer over I2C (GY-271 board) |
+
+Wiring the GY-271 to the Raspberry Pi 5:
+
+| GY-271 pin | Pi 5 physical pin | Function |
+|------------|-------------------|----------|
+| VCC | Pin 1 | 3.3V (**not** 5V) |
+| GND | Pin 6 | Ground |
+| SDA | Pin 3 | GPIO 2 (I2C1 SDA) |
+| SCL | Pin 5 | GPIO 3 (I2C1 SCL) |
+
+Verify with `i2cdetect -y 1` — the QMC5883L appears at address `0x0d`.
+
+## Deploying to the Raspberry Pi
+
+The Pi is at `team@tooes.local` (or `team@10.15.86.130` as fallback).
+
+### 1. Clone the repo (one-time)
+
+```bash
+ssh team@tooes.local
+git clone https://github.com/filio123321/Tooes.git ~/Tooes
+```
+
+### 2. Sync the OpenCellID data (not in git)
+
+The `firmware/data/` directory contains large CSV files from OpenCellID and is
+excluded from git via `firmware/.gitignore`. Sync it from your laptop:
+
+```bash
+# From your laptop, at the repo root:
+rsync -avz --progress firmware/data/ team@tooes.local:~/Tooes/firmware/data/
+```
+
+Run this again whenever you update the CSV files. The Pi does **not** need
+internet access to use the data — it's all local after the sync.
+
+### 3. Pull code updates
+
+```bash
+ssh team@tooes.local "cd ~/Tooes && git pull"
+```
+
+### 4. Run with real hardware
+
+```bash
+ssh team@tooes.local
+cd ~/Tooes
+HAL_BACKEND=grgsm \
+  HAL_ROTATION=qmc5883l \
+  HAL_GRGSM_SCANNER_CMD="grgsm_scanner -b GSM900 -a 'driver=sdrplay'" \
+  python3 -m firmware.run
+```

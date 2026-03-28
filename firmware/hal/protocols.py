@@ -29,6 +29,13 @@ class CellRssiReader(Protocol):
 
 
 @runtime_checkable
+class TiltReader(Protocol):
+    """Returns current pitch and roll in degrees for tilt compensation."""
+
+    def read_pitch_roll(self) -> tuple[float, float]: ...
+
+
+@runtime_checkable
 class DisplaySink(Protocol):
     """Stub for e-ink or other display output."""
 

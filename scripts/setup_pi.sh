@@ -32,7 +32,7 @@ echo "==> Remote dir: ~/$REMOTE_DIR"
 echo ""
 echo "==> [1/5] Syncing repo to Pi (rsync, skips .git)..."
 $RSYNC -avz -e "ssh $SSH_OPTS" \
-    --exclude='__pycache__' --exclude='.cursor' \
+    --exclude='.git/' --exclude='__pycache__/' --exclude='.cursor/' \
     ./ "$HOST:~/$REMOTE_DIR/"
 
 echo ""

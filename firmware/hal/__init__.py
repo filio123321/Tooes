@@ -7,7 +7,7 @@ Public surface:
 """
 
 from firmware.hal.types import CellKey, SweepSample, SCHEMA_VERSION
-from firmware.hal.protocols import SweepSampleSource, RotationReader, CellRssiReader
+from firmware.hal.protocols import SweepSampleSource, RotationReader, CellRssiReader, TiltReader
 from firmware.hal.factory import get_sweep_source
 
 __all__ = [
@@ -17,5 +17,6 @@ __all__ = [
     "SweepSampleSource",
     "RotationReader",
     "CellRssiReader",
+    "TiltReader",
     "get_sweep_source",
 ]

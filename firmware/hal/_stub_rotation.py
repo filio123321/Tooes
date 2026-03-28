@@ -1,7 +1,4 @@
-"""Placeholder rotation reader that increments azimuth on each call.
-
-Replace with a real IMU / magnetometer reader on the Pi.
-"""
+"""Placeholder rotation and tilt readers for tests without hardware."""
 
 from __future__ import annotations
 
@@ -17,3 +14,10 @@ class StubRotationReader:
         az = self._azimuth
         self._azimuth = (self._azimuth + self._step) % 360.0
         return az
+
+
+class StubTiltReader:
+    """Always reports perfectly level (pitch=0, roll=0)."""
+
+    def read_pitch_roll(self) -> tuple[float, float]:
+        return (0.0, 0.0)

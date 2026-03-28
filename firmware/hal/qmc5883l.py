@@ -7,6 +7,9 @@ Wiring (Pi 5 GPIO header):
     GY-271 SCL → Pin 5 (GPIO 3, I2C1 SCL)
 
 Requires: smbus2  (pre-installed on Raspberry Pi OS)
+
+Tilt compensation: if a TiltReader is provided, the raw magnetic vector
+is projected onto the true horizontal plane before computing heading.
 """
 
 from __future__ import annotations
@@ -14,6 +17,9 @@ from __future__ import annotations
 import math
 import time
 import logging
+from typing import Optional
+
+from firmware.hal.protocols import TiltReader
 
 _logger = logging.getLogger(__name__)
 
@@ -53,10 +59,16 @@ class QMC5883LRotationReader:
     The sensor must be mounted level (Z axis pointing up).
     """
 
-    def __init__(self, bus: int = _I2C_BUS, address: int = _ADDRESS) -> None:
+    def __init__(
+        self,
+        bus: int = _I2C_BUS,
+        address: int = _ADDRESS,
+        tilt: Optional[TiltReader] = None,
+    ) -> None:
         import smbus2
         self._address = address
         self._bus = smbus2.SMBus(bus)
+        self._tilt = tilt
         self._init_sensor()
 
     def _init_sensor(self) -> None:
@@ -83,9 +95,31 @@ class QMC5883LRotationReader:
         return x, y, z
 
     def read_azimuth(self) -> float:
-        """Return heading in degrees, clockwise from magnetic north, 0-360."""
-        x, y, _z = self._read_raw()
-        heading = math.degrees(math.atan2(y, x))
+        """Return heading in degrees, clockwise from magnetic north, 0-360.
+
+        If a TiltReader was provided, pitch/roll are used to project the
+        magnetic vector onto the horizontal plane before computing heading.
+        """
+        mx, my, mz = self._read_raw()
+
+        if self._tilt is not None:
+            pitch_deg, roll_deg = self._tilt.read_pitch_roll()
+            pitch = math.radians(pitch_deg)
+            roll = math.radians(roll_deg)
+
+            cos_p = math.cos(pitch)
+            sin_p = math.sin(pitch)
+            cos_r = math.cos(roll)
+            sin_r = math.sin(roll)
+
+            # Project magnetic vector onto the horizontal plane.
+            x_h = mx * cos_p + my * sin_r * sin_p + mz * cos_r * sin_p
+            y_h = my * cos_r - mz * sin_r
+        else:
+            x_h = float(mx)
+            y_h = float(my)
+
+        heading = math.degrees(math.atan2(y_h, x_h))
         if heading < 0:
             heading += 360.0
         return heading

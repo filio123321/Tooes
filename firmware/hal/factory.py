@@ -7,6 +7,7 @@ HAL_REPLAY_PATH        Path to .jsonl file     (required when backend=replay)
 HAL_GRGSM_SCANNER_CMD  Full shell command      (required when backend=grgsm)
 HAL_GRGSM_N_SCANS     Number of scan invocations per sweep (default: 36)
 HAL_ROTATION           stub | qmc5883l         (default: stub; used by grgsm backend)
+HAL_TILT               stub | mpu6050          (default: stub; fed into qmc5883l for tilt compensation)
 """
 
 from __future__ import annotations
@@ -49,6 +50,18 @@ def get_sweep_source() -> SweepSampleSource:
     raise ValueError(f"Unknown HAL_BACKEND: {backend!r} (expected mock|replay|grgsm)")
 
 
+def _get_tilt_reader():
+    """Return a TiltReader based on ``HAL_TILT`` env var."""
+    kind = os.environ.get("HAL_TILT", "stub").lower()
+    if kind == "stub":
+        from firmware.hal._stub_rotation import StubTiltReader
+        return StubTiltReader()
+    if kind == "mpu6050":
+        from firmware.hal.mpu6050 import MPU6050TiltReader
+        return MPU6050TiltReader()
+    raise ValueError(f"Unknown HAL_TILT: {kind!r} (expected stub|mpu6050)")
+
+
 def _get_rotation_reader():
     """Return a RotationReader based on ``HAL_ROTATION`` env var."""
     kind = os.environ.get("HAL_ROTATION", "stub").lower()
@@ -57,5 +70,6 @@ def _get_rotation_reader():
         return StubRotationReader()
     if kind == "qmc5883l":
         from firmware.hal.qmc5883l import QMC5883LRotationReader
-        return QMC5883LRotationReader()
+        tilt = _get_tilt_reader()
+        return QMC5883LRotationReader(tilt=tilt)
     raise ValueError(f"Unknown HAL_ROTATION: {kind!r} (expected stub|qmc5883l)")
