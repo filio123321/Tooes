@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """Estimate and plot a relative 2D path from MPU-6050 IMU logs.
 
-This version is tuned for walking traces where:
-- steps come from the linear acceleration magnitude
-- heading changes come from actual turn events, not continuous gyro drift
-- the sensor may be tilted or mounted off-axis
+This script does not recover a true ground-truth path. It produces a first-pass
+dead-reckoning estimate by:
+1. detecting likely steps from linear acceleration magnitude
+2. using one integrated gyro angle axis as the relative heading
+3. advancing a fixed step length in that heading
 
-The heading estimate is built from the gyroscope projected onto the gravity
-vector, which is a better approximation of yaw than assuming body-axis Z is
-always vertical. Turn accumulation is suppressed between turn events so the
-path stays straighter while walking.
+That makes it useful for visualizing relative movement around the start point,
+but it will drift and depends heavily on sensor mounting.
 
 Examples:
     python3 separate_component_files/plot_mpu6050_relative_path.py
     python3 separate_component_files/plot_mpu6050_relative_path.py my_log.csv --show
-    python3 separate_component_files/plot_mpu6050_relative_path.py my_log.csv --snap-turn-deg 90
+    python3 separate_component_files/plot_mpu6050_relative_path.py my_log.csv --heading-axis z
 """
 
 from __future__ import annotations
@@ -33,43 +32,23 @@ _DEFAULT_LOG_DIR = Path(__file__).resolve().parent / "logs"
 @dataclass
 class ImuPathInput:
     time_s: list[float]
-    dt_s: list[float]
     linear_mag_g: list[float]
     stationary: list[bool]
-    gyro_x_dps: list[float]
-    gyro_y_dps: list[float]
-    gyro_z_dps: list[float]
-    gravity_x_g: list[float]
-    gravity_y_g: list[float]
-    gravity_z_g: list[float]
-
-
-@dataclass
-class TurnSegment:
-    start_index: int
-    end_index: int
-    raw_delta_deg: float
-    used_delta_deg: float
+    angle_x_deg: list[float]
+    angle_y_deg: list[float]
+    angle_z_deg: list[float]
 
 
 @dataclass
 class PathEstimate:
-    heading_mode: str
-    step_threshold_g: float
-    turn_threshold_dps: float
-    snap_turn_deg: float
-    snap_turn_source: str
+    heading_axis: str
+    threshold_g: float
     step_indices: list[int]
     step_times_s: list[float]
     step_headings_deg: list[float]
     step_peaks_g: list[float]
-    yaw_rate_dps: list[float]
-    yaw_rate_smooth_dps: list[float]
-    yaw_rate_filtered_dps: list[float]
-    heading_deg: list[float]
     x_m: list[float]
     y_m: list[float]
-    turn_segments: list[TurnSegment]
 
 
 def _parse_args() -> argparse.Namespace:
@@ -95,15 +74,15 @@ def _parse_args() -> argparse.Namespace:
         help="Open the plot interactively after saving.",
     )
     parser.add_argument(
-        "--heading-mode",
-        choices=("auto", "vertical", "x", "y", "z"),
+        "--heading-axis",
+        choices=("auto", "x", "y", "z"),
         default="auto",
-        help="How to derive heading. 'vertical' projects gyro onto gravity; this is the default via 'auto'.",
+        help="Which integrated gyro angle to treat as heading.",
     )
     parser.add_argument(
         "--invert-heading",
         action="store_true",
-        help="Flip the heading sign if the path still comes out mirrored.",
+        help="Flip the heading sign if the path comes out mirrored.",
     )
     parser.add_argument(
         "--heading-offset-deg",
@@ -130,23 +109,6 @@ def _parse_args() -> argparse.Namespace:
         help="Manual threshold for linear acceleration peaks. If omitted, auto-estimated.",
     )
     parser.add_argument(
-        "--turn-rate-threshold-dps",
-        type=float,
-        default=None,
-        help="Only gyro rates above this are treated as turns. If omitted, auto-estimated.",
-    )
-    parser.add_argument(
-        "--turn-smoothing-window",
-        type=int,
-        default=7,
-        help="Moving-average window for stabilizing the turn detector.",
-    )
-    parser.add_argument(
-        "--snap-turn-deg",
-        default="auto",
-        help="Use auto, off, or a number like 90 to snap detected turns.",
-    )
-    parser.add_argument(
         "--start-seconds",
         type=float,
         default=None,
@@ -166,17 +128,6 @@ def _parse_args() -> argparse.Namespace:
         parser.error("--min-step-seconds must be > 0")
     if args.peak_threshold_g is not None and args.peak_threshold_g <= 0:
         parser.error("--peak-threshold-g must be > 0 when provided")
-    if args.turn_rate_threshold_dps is not None and args.turn_rate_threshold_dps <= 0:
-        parser.error("--turn-rate-threshold-dps must be > 0 when provided")
-    if args.turn_smoothing_window <= 0:
-        parser.error("--turn-smoothing-window must be > 0")
-    snap_text = str(args.snap_turn_deg).strip().lower()
-    if snap_text not in {"auto", "off", "none"}:
-        try:
-            if float(args.snap_turn_deg) < 0:
-                parser.error("--snap-turn-deg must be >= 0")
-        except ValueError:
-            parser.error("--snap-turn-deg must be auto, off, none, or a number")
 
     return args
 
@@ -206,12 +157,9 @@ def _load_input(
     time_s: list[float] = []
     linear_mag_g: list[float] = []
     stationary: list[bool] = []
-    gyro_x_dps: list[float] = []
-    gyro_y_dps: list[float] = []
-    gyro_z_dps: list[float] = []
-    gravity_x_g: list[float] = []
-    gravity_y_g: list[float] = []
-    gravity_z_g: list[float] = []
+    angle_x_deg: list[float] = []
+    angle_y_deg: list[float] = []
+    angle_z_deg: list[float] = []
 
     with path.open("r", newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -225,82 +173,49 @@ def _load_input(
             time_s.append(elapsed)
             linear_mag_g.append(_float(row, "linear_avg_mag_g"))
             stationary.append(_bool(row, "stationary"))
-            gyro_x_dps.append(_float(row, "gyro_corrected_x_dps"))
-            gyro_y_dps.append(_float(row, "gyro_corrected_y_dps"))
-            gyro_z_dps.append(_float(row, "gyro_corrected_z_dps"))
-            gravity_x_g.append(_float(row, "gravity_x_g"))
-            gravity_y_g.append(_float(row, "gravity_y_g"))
-            gravity_z_g.append(_float(row, "gravity_z_g"))
+            angle_x_deg.append(_float(row, "gyro_angle_x_deg"))
+            angle_y_deg.append(_float(row, "gyro_angle_y_deg"))
+            angle_z_deg.append(_float(row, "gyro_angle_z_deg"))
 
     if not time_s:
         raise ValueError("The selected CSV has no rows in the requested time window.")
 
-    dt_s = [0.0]
-    for index in range(1, len(time_s)):
-        dt_s.append(max(0.0, time_s[index] - time_s[index - 1]))
-
     return ImuPathInput(
         time_s=time_s,
-        dt_s=dt_s,
         linear_mag_g=linear_mag_g,
         stationary=stationary,
-        gyro_x_dps=gyro_x_dps,
-        gyro_y_dps=gyro_y_dps,
-        gyro_z_dps=gyro_z_dps,
-        gravity_x_g=gravity_x_g,
-        gravity_y_g=gravity_y_g,
-        gravity_z_g=gravity_z_g,
+        angle_x_deg=angle_x_deg,
+        angle_y_deg=angle_y_deg,
+        angle_z_deg=angle_z_deg,
     )
 
 
-def _moving_average(values: list[float], window: int) -> list[float]:
-    if window <= 1:
-        return list(values)
+def _choose_heading_axis(data: ImuPathInput, mode: str) -> str:
+    if mode != "auto":
+        return mode
 
-    out: list[float] = []
-    running = 0.0
-    history: list[float] = []
-    for value in values:
-        history.append(value)
-        running += value
-        if len(history) > window:
-            running -= history.pop(0)
-        out.append(running / len(history))
-    return out
+    active_indices = [i for i, is_stationary in enumerate(data.stationary) if not is_stationary]
+    if not active_indices:
+        active_indices = list(range(len(data.time_s)))
 
-
-def _normalize(x: float, y: float, z: float) -> tuple[float, float, float]:
-    magnitude = math.sqrt((x * x) + (y * y) + (z * z))
-    if magnitude < 1e-9:
-        return (0.0, 0.0, 1.0)
-    return (x / magnitude, y / magnitude, z / magnitude)
+    axis_to_values = {
+        "x": [data.angle_x_deg[i] for i in active_indices],
+        "y": [data.angle_y_deg[i] for i in active_indices],
+        "z": [data.angle_z_deg[i] for i in active_indices],
+    }
+    axis_ranges = {
+        axis: (max(values) - min(values)) if values else 0.0
+        for axis, values in axis_to_values.items()
+    }
+    return max(axis_ranges, key=axis_ranges.get)
 
 
-def _heading_mode(mode: str) -> str:
-    return "vertical" if mode == "auto" else mode
-
-
-def _yaw_rate_dps(data: ImuPathInput, mode: str) -> list[float]:
-    resolved_mode = _heading_mode(mode)
-    if resolved_mode == "x":
-        return list(data.gyro_x_dps)
-    if resolved_mode == "y":
-        return list(data.gyro_y_dps)
-    if resolved_mode == "z":
-        return list(data.gyro_z_dps)
-
-    yaw_rate: list[float] = []
-    for gx, gy, gz, grav_x, grav_y, grav_z in zip(
-        data.gyro_x_dps,
-        data.gyro_y_dps,
-        data.gyro_z_dps,
-        data.gravity_x_g,
-        data.gravity_y_g,
-        data.gravity_z_g,
-    ):
-        up_x, up_y, up_z = _normalize(grav_x, grav_y, grav_z)
-        yaw_rate.append((gx * up_x) + (gy * up_y) + (gz * up_z))
-    return yaw_rate
+def _heading_series(data: ImuPathInput, axis: str) -> list[float]:
+    if axis == "x":
+        return data.angle_x_deg
+    if axis == "y":
+        return data.angle_y_deg
+    return data.angle_z_deg
 
 
 def _auto_peak_threshold(data: ImuPathInput) -> float:
@@ -315,20 +230,6 @@ def _auto_peak_threshold(data: ImuPathInput) -> float:
         return max(0.02, mean + (4.0 * std))
 
     return max(0.02, statistics.fmean(data.linear_mag_g) * 2.5)
-
-
-def _auto_turn_threshold(yaw_rate_dps: list[float], stationary: list[bool]) -> float:
-    active = [
-        abs(rate)
-        for rate, is_stationary in zip(yaw_rate_dps, stationary)
-        if not is_stationary
-    ]
-    if not active:
-        active = [abs(rate) for rate in yaw_rate_dps]
-
-    mean = statistics.fmean(active)
-    std = statistics.pstdev(active) if len(active) > 1 else 0.0
-    return max(20.0, mean + (1.75 * std))
 
 
 def _detect_steps(
@@ -361,166 +262,16 @@ def _detect_steps(
     return peaks
 
 
-def _turn_mask(
-    yaw_rate_smooth_dps: list[float],
-    turn_threshold_dps: float,
-) -> list[bool]:
-    return [abs(rate) >= turn_threshold_dps for rate in yaw_rate_smooth_dps]
-
-
-def _turn_segments(mask: list[bool]) -> list[tuple[int, int]]:
-    segments: list[tuple[int, int]] = []
-    start_index: int | None = None
-
-    for index, active in enumerate(mask):
-        if active and start_index is None:
-            start_index = index
-        elif not active and start_index is not None:
-            segments.append((start_index, index - 1))
-            start_index = None
-
-    if start_index is not None:
-        segments.append((start_index, len(mask) - 1))
-
-    return segments
-
-
-def _resolve_snap_turn_deg(
-    raw_turn_deltas_deg: list[float],
-    snap_turn_arg: str,
-) -> tuple[float, str]:
-    snap_text = str(snap_turn_arg).strip().lower()
-    if snap_text in {"off", "none", "0", "0.0"}:
-        return 0.0, "disabled"
-
-    if snap_text != "auto":
-        return float(snap_turn_arg), "manual"
-
-    abs_deltas = [abs(delta) for delta in raw_turn_deltas_deg if abs(delta) >= 15.0]
-    if not abs_deltas:
-        return 0.0, "auto-none"
-
-    candidates = [45.0, 60.0, 90.0, 120.0, 135.0, 180.0]
-    best_candidate = 0.0
-    best_score = float("inf")
-    best_avg_error = float("inf")
-    best_max_error = float("inf")
-
-    for candidate in candidates:
-        multipliers = [max(1, round(delta / candidate)) for delta in abs_deltas]
-        errors = [
-            abs(delta - (candidate * multiplier))
-            for delta, multiplier in zip(abs_deltas, multipliers)
-        ]
-        avg_error = statistics.fmean(errors)
-        max_error = max(errors)
-        mean_multiplier = statistics.fmean(multipliers)
-        score = avg_error + (candidate * 0.25 * (mean_multiplier - 1.0))
-        if score < best_score:
-            best_score = score
-            best_candidate = candidate
-            best_avg_error = avg_error
-            best_max_error = max_error
-
-    if best_candidate <= 0:
-        return 0.0, "auto-none"
-
-    avg_limit = max(10.0, best_candidate * 0.15)
-    max_limit = max(18.0, best_candidate * 0.25)
-    if best_avg_error <= avg_limit and best_max_error <= max_limit:
-        return best_candidate, "auto"
-
-    return 0.0, "auto-none"
-
-
-def _build_heading(
-    data: ImuPathInput,
-    yaw_rate_dps: list[float],
-    yaw_rate_smooth_dps: list[float],
-    turn_threshold_dps: float,
-    invert_heading: bool,
-    heading_offset_deg: float,
-    snap_turn_arg: str,
-) -> tuple[list[float], list[float], list[TurnSegment], float, str]:
-    mask = _turn_mask(yaw_rate_smooth_dps, turn_threshold_dps)
-    filtered_yaw_rate_dps = [
-        rate if active else 0.0
-        for rate, active in zip(yaw_rate_dps, mask)
-    ]
-    raw_turn_heading_deg = [0.0 for _ in data.time_s]
-    for index in range(1, len(data.time_s)):
-        raw_turn_heading_deg[index] = (
-            raw_turn_heading_deg[index - 1]
-            + (filtered_yaw_rate_dps[index] * data.dt_s[index])
-        )
-
-    segments = _turn_segments(mask)
-    raw_turn_deltas_deg: list[float] = []
-    for start_index, end_index in segments:
-        segment_start_heading = raw_turn_heading_deg[start_index - 1] if start_index > 0 else 0.0
-        raw_turn_deltas_deg.append(raw_turn_heading_deg[end_index] - segment_start_heading)
-
-    snap_turn_deg, snap_turn_source = _resolve_snap_turn_deg(
-        raw_turn_deltas_deg=raw_turn_deltas_deg,
-        snap_turn_arg=snap_turn_arg,
-    )
-    turn_segments: list[TurnSegment] = []
-    heading_deg = [0.0 for _ in data.time_s]
-    current_heading = 0.0
-    previous_end = 0
-
-    for start_index, end_index in segments:
-        for index in range(previous_end, start_index):
-            heading_deg[index] = current_heading
-
-        segment_start_heading = raw_turn_heading_deg[start_index - 1] if start_index > 0 else 0.0
-        raw_delta_deg = raw_turn_heading_deg[end_index] - segment_start_heading
-        used_delta_deg = raw_delta_deg
-        if snap_turn_deg > 0:
-            used_delta_deg = round(raw_delta_deg / snap_turn_deg) * snap_turn_deg
-
-        segment_length = max(1, end_index - start_index + 1)
-        for offset, index in enumerate(range(start_index, end_index + 1), start=1):
-            fraction = offset / segment_length
-            heading_deg[index] = current_heading + (used_delta_deg * fraction)
-
-        current_heading += used_delta_deg
-        previous_end = end_index + 1
-        turn_segments.append(
-            TurnSegment(
-                start_index=start_index,
-                end_index=end_index,
-                raw_delta_deg=raw_delta_deg,
-                used_delta_deg=used_delta_deg,
-            )
-        )
-
-    for index in range(previous_end, len(data.time_s)):
-        heading_deg[index] = current_heading
-
-    direction_sign = 1.0 if invert_heading else -1.0
-    heading_deg = [
-        heading_offset_deg + (direction_sign * value)
-        for value in heading_deg
-    ]
-    return heading_deg, filtered_yaw_rate_dps, turn_segments, snap_turn_deg, snap_turn_source
-
-
 def _estimate_path(
     data: ImuPathInput,
-    heading_mode: str,
-    step_threshold_g: float,
-    turn_threshold_dps: float,
-    snap_turn_deg: float,
-    snap_turn_source: str,
+    heading_axis: str,
+    threshold_g: float,
     step_indices: list[int],
-    yaw_rate_dps: list[float],
-    yaw_rate_smooth_dps: list[float],
-    heading_deg: list[float],
-    yaw_rate_filtered_dps: list[float],
-    turn_segments: list[TurnSegment],
     step_length_m: float,
+    invert_heading: bool,
+    heading_offset_deg: float,
 ) -> PathEstimate:
+    headings = _heading_series(data, heading_axis)
     x_m = [0.0]
     y_m = [0.0]
     step_times_s: list[float] = []
@@ -529,42 +280,36 @@ def _estimate_path(
 
     x = 0.0
     y = 0.0
+    sign = -1.0 if invert_heading else 1.0
+
     for index in step_indices:
-        step_heading_deg = heading_deg[index]
-        step_heading_rad = math.radians(step_heading_deg)
-        x += step_length_m * math.sin(step_heading_rad)
-        y += step_length_m * math.cos(step_heading_rad)
+        heading_deg = (sign * headings[index]) + heading_offset_deg
+        heading_rad = math.radians(heading_deg)
+        x += step_length_m * math.sin(heading_rad)
+        y += step_length_m * math.cos(heading_rad)
         x_m.append(x)
         y_m.append(y)
         step_times_s.append(data.time_s[index])
-        step_headings_deg.append(step_heading_deg)
+        step_headings_deg.append(heading_deg)
         step_peaks_g.append(data.linear_mag_g[index])
 
     return PathEstimate(
-        heading_mode=heading_mode,
-        step_threshold_g=step_threshold_g,
-        turn_threshold_dps=turn_threshold_dps,
-        snap_turn_deg=snap_turn_deg,
-        snap_turn_source=snap_turn_source,
+        heading_axis=heading_axis,
+        threshold_g=threshold_g,
         step_indices=step_indices,
         step_times_s=step_times_s,
         step_headings_deg=step_headings_deg,
         step_peaks_g=step_peaks_g,
-        yaw_rate_dps=yaw_rate_dps,
-        yaw_rate_smooth_dps=yaw_rate_smooth_dps,
-        yaw_rate_filtered_dps=yaw_rate_filtered_dps,
-        heading_deg=heading_deg,
         x_m=x_m,
         y_m=y_m,
-        turn_segments=turn_segments,
     )
 
 
 def _path_length_m(path: PathEstimate) -> float:
     total = 0.0
-    for index in range(1, len(path.x_m)):
-        dx = path.x_m[index] - path.x_m[index - 1]
-        dy = path.y_m[index] - path.y_m[index - 1]
+    for i in range(1, len(path.x_m)):
+        dx = path.x_m[i] - path.x_m[i - 1]
+        dy = path.y_m[i] - path.y_m[i - 1]
         total += math.hypot(dx, dy)
     return total
 
@@ -586,28 +331,21 @@ def _stationary_spans(time_s: list[float], stationary: list[bool]) -> list[tuple
     return spans
 
 
-def _add_span_shading(axis, spans: list[tuple[float, float]], color: str, label: str) -> None:
+def _add_stationary_shading(axis, spans: list[tuple[float, float]]) -> None:
     first = True
     for start, end in spans:
         axis.axvspan(
             start,
             end,
-            color=color,
-            alpha=0.18,
-            label=label if first else None,
+            color="#d8f3dc",
+            alpha=0.25,
+            label="stationary" if first else None,
         )
         first = False
 
 
-def _turn_spans(data: ImuPathInput, turn_segments: list[TurnSegment]) -> list[tuple[float, float]]:
-    return [
-        (data.time_s[segment.start_index], data.time_s[segment.end_index])
-        for segment in turn_segments
-    ]
-
-
 def _plot(
-    data: ImuPathInput,
+    series: ImuPathInput,
     path: PathEstimate,
     input_path: Path,
     output_path: Path,
@@ -629,23 +367,16 @@ def _plot(
     ax_heading = fig.add_subplot(grid[1, 0], sharex=ax_linear)
     ax_path = fig.add_subplot(grid[2, 0])
 
-    stationary_spans = _stationary_spans(data.time_s, data.stationary)
-    turn_spans = _turn_spans(data, path.turn_segments)
-    _add_span_shading(ax_linear, stationary_spans, "#d8f3dc", "stationary")
-    _add_span_shading(ax_heading, stationary_spans, "#d8f3dc", "stationary")
-    _add_span_shading(ax_heading, turn_spans, "#ffe8cc", "turn")
+    spans = _stationary_spans(series.time_s, series.stationary)
+    _add_stationary_shading(ax_linear, spans)
+    _add_stationary_shading(ax_heading, spans)
 
-    ax_linear.plot(data.time_s, data.linear_mag_g, label="linear_avg_mag_g", color="black")
-    ax_linear.axhline(
-        path.step_threshold_g,
-        color="crimson",
-        linestyle="--",
-        label="step threshold",
-    )
+    ax_linear.plot(series.time_s, series.linear_mag_g, label="linear_avg_mag_g", color="black")
+    ax_linear.axhline(path.threshold_g, color="crimson", linestyle="--", label="step threshold")
     if path.step_indices:
         ax_linear.scatter(
-            [data.time_s[index] for index in path.step_indices],
-            [data.linear_mag_g[index] for index in path.step_indices],
+            [series.time_s[i] for i in path.step_indices],
+            [series.linear_mag_g[i] for i in path.step_indices],
             color="tab:blue",
             s=25,
             label="detected steps",
@@ -655,39 +386,18 @@ def _plot(
     ax_linear.grid(True, alpha=0.3)
     ax_linear.legend(loc="upper right")
 
-    ax_heading.plot(
-        data.time_s,
-        path.yaw_rate_smooth_dps,
-        color="#999999",
-        linewidth=1.0,
-        label="yaw_rate_smooth_dps",
-    )
-    ax_heading.plot(
-        data.time_s,
-        path.yaw_rate_filtered_dps,
-        color="tab:purple",
-        linewidth=1.2,
-        label="turn_only_yaw_rate_dps",
-    )
-    ax_heading.plot(
-        data.time_s,
-        path.heading_deg,
-        color="tab:blue",
-        linewidth=1.8,
-        label="heading_deg",
-    )
+    heading_values = _heading_series(series, path.heading_axis)
+    ax_heading.plot(series.time_s, heading_values, label=f"gyro_angle_{path.heading_axis}_deg")
     if path.step_indices:
         ax_heading.scatter(
-            [data.time_s[index] for index in path.step_indices],
-            [path.heading_deg[index] for index in path.step_indices],
+            [series.time_s[i] for i in path.step_indices],
+            [heading_values[i] for i in path.step_indices],
             color="tab:orange",
             s=25,
             label="heading at step",
             zorder=3,
         )
-    ax_heading.axhline(path.turn_threshold_dps, color="#aa5500", linestyle=":", linewidth=1.0)
-    ax_heading.axhline(-path.turn_threshold_dps, color="#aa5500", linestyle=":", linewidth=1.0)
-    ax_heading.set_ylabel("Heading / Yaw")
+    ax_heading.set_ylabel("Heading (deg)")
     ax_heading.set_xlabel("Elapsed time (s)")
     ax_heading.grid(True, alpha=0.3)
     ax_heading.legend(loc="upper right")
@@ -699,8 +409,8 @@ def _plot(
         ax_path.quiver(
             path.x_m[:-1],
             path.y_m[:-1],
-            [path.x_m[index + 1] - path.x_m[index] for index in range(len(path.x_m) - 1)],
-            [path.y_m[index + 1] - path.y_m[index] for index in range(len(path.y_m) - 1)],
+            [path.x_m[i + 1] - path.x_m[i] for i in range(len(path.x_m) - 1)],
+            [path.y_m[i + 1] - path.y_m[i] for i in range(len(path.y_m) - 1)],
             angles="xy",
             scale_units="xy",
             scale=1,
@@ -720,39 +430,41 @@ def _plot(
     fig.suptitle(
         (
             f"Relative Path Estimate: {input_path.name}\n"
-            f"mode={path.heading_mode} steps={len(path.step_indices)} "
-            f"path={_path_length_m(path):.2f}m net={net_distance:.2f}m "
-            f"end=({path.x_m[-1]:.2f},{path.y_m[-1]:.2f})m "
-            f"step_thr={path.step_threshold_g:.3f}g turn_thr={path.turn_threshold_dps:.1f}dps "
-            f"snap={path.snap_turn_source}:{path.snap_turn_deg:.0f}"
+            f"axis={path.heading_axis} steps={len(path.step_indices)} "
+            f"step_length={_format2(path.x_m, path.y_m, net_distance, _path_length_m(path), path.threshold_g)}"
         ),
         fontsize=13,
     )
 
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    saved_path = output_path.resolve()
-    fig.savefig(saved_path, dpi=150)
-    print(f"Saved path plot to {saved_path}")
-    print(f"Heading mode: {path.heading_mode}")
+    fig.savefig(output_path, dpi=150)
+    print(f"Saved path plot to {output_path}")
+    print(f"Heading axis: {path.heading_axis}")
     print(f"Detected steps: {len(path.step_indices)}")
-    print(f"Step threshold: {path.step_threshold_g:.4f} g")
-    print(f"Turn threshold: {path.turn_threshold_dps:.2f} dps")
-    print(f"Turn snapping: {path.snap_turn_source} ({path.snap_turn_deg:.1f} deg)")
+    print(f"Peak threshold: {path.threshold_g:.4f} g")
     print(f"Estimated path length: {_path_length_m(path):.2f} m")
     print(f"Estimated net displacement: {net_distance:.2f} m")
-    for index, segment in enumerate(path.turn_segments, start=1):
-        start_time = data.time_s[segment.start_index]
-        end_time = data.time_s[segment.end_index]
-        print(
-            f"Turn {index}: {start_time:.2f}s -> {end_time:.2f}s "
-            f"raw={segment.raw_delta_deg:.1f}deg used={segment.used_delta_deg:.1f}deg"
-        )
 
     if show:
         plt.show()
     else:
         plt.close(fig)
+
+
+def _format2(
+    x_m: list[float],
+    y_m: list[float],
+    net_distance: float,
+    path_length: float,
+    threshold_g: float,
+) -> str:
+    end_x = x_m[-1]
+    end_y = y_m[-1]
+    return (
+        f"path={path_length:.2f}m net={net_distance:.2f}m "
+        f"end=({end_x:.2f},{end_y:.2f})m thr={threshold_g:.3f}g"
+    )
 
 
 def main() -> int:
@@ -762,55 +474,33 @@ def main() -> int:
         raise FileNotFoundError(f"CSV log not found: {input_path}")
 
     output_path = args.output or input_path.with_name(f"{input_path.stem}_path.png")
-    data = _load_input(
+    series = _load_input(
         path=input_path,
         start_seconds=args.start_seconds,
         end_seconds=args.end_seconds,
     )
-    heading_mode = _heading_mode(args.heading_mode)
-    yaw_rate_dps = _yaw_rate_dps(data, heading_mode)
-    yaw_rate_smooth_dps = _moving_average(yaw_rate_dps, args.turn_smoothing_window)
-    step_threshold_g = (
+    heading_axis = _choose_heading_axis(series, args.heading_axis)
+    threshold_g = (
         args.peak_threshold_g
         if args.peak_threshold_g is not None
-        else _auto_peak_threshold(data)
-    )
-    turn_threshold_dps = (
-        args.turn_rate_threshold_dps
-        if args.turn_rate_threshold_dps is not None
-        else _auto_turn_threshold(yaw_rate_smooth_dps, data.stationary)
+        else _auto_peak_threshold(series)
     )
     step_indices = _detect_steps(
-        data=data,
-        threshold_g=step_threshold_g,
+        data=series,
+        threshold_g=threshold_g,
         min_step_seconds=args.min_step_seconds,
     )
-    heading_deg, yaw_rate_filtered_dps, turn_segments, snap_turn_deg, snap_turn_source = _build_heading(
-        data=data,
-        yaw_rate_dps=yaw_rate_dps,
-        yaw_rate_smooth_dps=yaw_rate_smooth_dps,
-        turn_threshold_dps=turn_threshold_dps,
+    path = _estimate_path(
+        data=series,
+        heading_axis=heading_axis,
+        threshold_g=threshold_g,
+        step_indices=step_indices,
+        step_length_m=args.step_length_m,
         invert_heading=args.invert_heading,
         heading_offset_deg=args.heading_offset_deg,
-        snap_turn_arg=args.snap_turn_deg,
-    )
-    path = _estimate_path(
-        data=data,
-        heading_mode=heading_mode,
-        step_threshold_g=step_threshold_g,
-        turn_threshold_dps=turn_threshold_dps,
-        snap_turn_deg=snap_turn_deg,
-        snap_turn_source=snap_turn_source,
-        step_indices=step_indices,
-        yaw_rate_dps=yaw_rate_dps,
-        yaw_rate_smooth_dps=yaw_rate_smooth_dps,
-        heading_deg=heading_deg,
-        yaw_rate_filtered_dps=yaw_rate_filtered_dps,
-        turn_segments=turn_segments,
-        step_length_m=args.step_length_m,
     )
     _plot(
-        data=data,
+        series=series,
         path=path,
         input_path=input_path,
         output_path=output_path,
