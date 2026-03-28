@@ -1,18 +1,32 @@
 import csv
 import sys
 import logging
+import dataclasses
 from pathlib import Path
-from typing import Optional, Dict, Union
+from typing import Optional, Dict, Type, Union
 
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-logger = logging.getLogger(__name__)
+if __package__ is None:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from firmware.log_config import configure_logging
+
+
+@dataclasses.dataclass
+class TowerCoordinatesDict:
+    """Float lat, lng pair."""
+    lat: float
+    lon: float
+
+
+_logger = logging.getLogger(__name__)
+
 
 def lookup_tower(
     mcc: Union[int, str], 
     mnc: Union[int, str], 
     lac: Union[int, str], 
     cell_id: Union[int, str]
-) -> Optional[Dict[str, float]]:
+) -> Optional[TowerCoordinatesDict]:
     """
     Looks up a cell tower's geographical coordinates in a local OpenCelliD CSV database.
 
@@ -26,7 +40,7 @@ def lookup_tower(
         cell_id: Cell Identity (e.g., 4521).
 
     Returns:
-        A dictionary containing 'lat' and 'lon' as floats if the tower is found.
+        A dataclass containing 'lat' and 'lon' as floats if the tower is found.
         Returns None if the tower is not present in the database.
 
     Raises:
@@ -66,10 +80,10 @@ def lookup_tower(
                         int(row['area']) == target_lac and
                         int(row['cell']) == target_cell):
                         
-                        return {
-                            "lat": float(row['lat']),
-                            "lon": float(row['lon'])
-                        }
+                        return TowerCoordinatesDict(
+                            lat=float(row['lat']),
+                            lon=float(row['lon'])
+                        )
                 except (ValueError, KeyError, TypeError):
                     # Silently skip rows with missing columns or non-numeric data
                     continue
@@ -83,7 +97,10 @@ def lookup_tower(
 
     return None
 
-if __name__ == "__main__":
+
+def _test_poc():
+    configure_logging()
+
     # Example evaluation with some random sample data from the SDR demodulator
     # (Cell #4521, LAC #8240, MCC 389, MNC 70)
     test_params = {
@@ -100,6 +117,10 @@ if __name__ == "__main__":
     result = lookup_tower(**test_params)
     
     if result:
-        print(f"RESULT: Found at Latitude {result['lat']}, Longitude {result['lon']}")
+        print(f"RESULT: Found at Latitude {result.lat}, Longitude {result.lon}")
     else:
         print("RESULT: Tower not found in the local database.")
+
+
+if __name__ == "__main__":
+    _test_poc()
