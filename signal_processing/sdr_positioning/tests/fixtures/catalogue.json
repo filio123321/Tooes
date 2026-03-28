@@ -1,0 +1,43 @@
+{
+  "91.4": {
+    "lat": 42.0357,
+    "lon": 23.0953,
+    "station": "TX_North",
+    "name": "FM North",
+    "type": "FM",
+    "power_w": 300
+  },
+  "112.3": {
+    "lat": 42.6635,
+    "lon": 23.7000,
+    "station": "TX_East",
+    "name": "VOR East",
+    "type": "VOR",
+    "power_w": 200
+  },
+  "225.648": {
+    "lat": 42.8000,
+    "lon": 22.8000,
+    "station": "TX_NW",
+    "name": "DAB NW",
+    "type": "DAB",
+    "power_w": 1000
+  },
+  "506.0": {
+    "lat": 41.8000,
+    "lon": 23.2000,
+    "station": "TX_South",
+    "name": "DVB-T South",
+    "type": "DVB-T",
+    "power_w": 10000,
+    "antenna_gain_dbi": 6.0
+  },
+  "947.6": {
+    "lat": 42.5000,
+    "lon": 23.8000,
+    "station": "TX_SE",
+    "name": "GSM SE",
+    "type": "GSM",
+    "power_w": 20
+  }
+}
