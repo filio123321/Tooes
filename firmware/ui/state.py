@@ -24,7 +24,7 @@ class UiState:
     zoom: int = 16
     show_overlay: bool = False
     show_catalog_towers: bool = True
-    show_trace: bool = False
+    show_trace: bool = True
     menu_open: bool = False
     menu_index: int = 0
 
