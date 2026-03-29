@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from firmware.ui.geo import MAX_ZOOM, MIN_ZOOM, clamp
+from firmware.ui.redraw import runtime_change_requires_redraw
 from firmware.ui.runtime import UiRuntime
 from firmware.ui.screens import render_boot, render_map, render_scanning, render_tutorial
 from firmware.ui.state import RenderState, Screen, UiState
@@ -246,9 +247,15 @@ class App:
                 now = time.monotonic()
 
                 runtime = self._runtime.snapshot()
-                if runtime != self._last_runtime_snapshot:
+                if runtime_change_requires_redraw(
+                    screen=self._ui.screen,
+                    menu_open=self._ui.menu_open,
+                    previous=self._last_runtime_snapshot,
+                    current=runtime,
+                    redraw_distance_m=self._runtime.config.redraw_distance_m,
+                ):
                     self._needs_redraw = True
-                    self._last_runtime_snapshot = runtime
+                self._last_runtime_snapshot = runtime
 
                 if self._ui.screen == Screen.SCANNING and runtime.scan_done:
                     if self._scan_done_at is None:
