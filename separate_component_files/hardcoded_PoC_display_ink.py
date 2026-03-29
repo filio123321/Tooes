@@ -44,11 +44,11 @@ EPD_HEIGHT = 128
 # Map / location settings
 # USER is always the map center
 # =========================================================
-USER_LAT = 42.0202
-USER_LON = 23.0918
+USER_LAT = 42.012280
+USER_LON = 23.095261
 
-TOWER_LAT = 42.0187
-TOWER_LON = 23.0998
+TOWER_LAT = 42.0140
+TOWER_LON = 23.0942
 
 MIN_ZOOM = 0
 MAX_ZOOM = 19
