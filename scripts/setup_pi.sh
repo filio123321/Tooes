@@ -52,18 +52,14 @@ echo "==> [3/5] Initialising git repo on Pi..."
 $SSH "$HOST" "
     cd ~/$REMOTE_DIR
     git init -q
-    git checkout -B main 2>/dev/null || true
     if git remote get-url origin >/dev/null 2>&1; then
         git remote set-url origin $REPO_URL
-        echo '    Remote origin updated to $REPO_URL'
     else
         git remote add origin $REPO_URL
-        echo '    Remote origin set to $REPO_URL'
     fi
-    git add -A
-    git commit -q -m 'chore: sync from rsync' || true
-    git branch --set-upstream-to=origin/main main 2>/dev/null || true
-    echo '    Git repo ready. Run: git pull  to update from GitHub.'
+    git fetch -q origin
+    git checkout -B main origin/main
+    echo '    Git repo ready. Run: git pull to update from GitHub.'
 "
 
 echo ""
