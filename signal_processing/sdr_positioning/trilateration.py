@@ -123,6 +123,10 @@ def _from_enu(px: float, py: float, lat0: float, lon0: float) -> tuple[float, fl
 # Internal solver
 # ---------------------------------------------------------------------------
 
+_LOG10_OVER_20 = math.log(10.0) / 20.0
+_SIGMA_RSSI_DB = 3.0   # assumed RSSI measurement noise (dB); drives GDOP accuracy estimate
+
+
 def _solve(
     measurements: list[Measurement],
     env: Environment,
@@ -164,12 +168,30 @@ def _solve(
     rx_px, rx_py = float(result.x[0]), float(result.x[1])
     lat, lon = _from_enu(rx_px, rx_py, lat0, lon0)
 
-    n = len(measurements)
-    residuals = [
-        (math.sqrt((rx_px - tx_px) ** 2 + (rx_py - tx_py) ** 2) - d_est) ** 2
-        for (tx_px, tx_py), d_est in zip(tx_enu, distances)
+    # GDOP-based accuracy: propagate range noise through geometry at the solution point.
+    # σ_r_i = d_i × (ln10/20) × σ_RSSI_dB  (linearised FSPL noise model)
+    # C = (H^T W H)^{-1}  →  accuracy = sqrt(trace(C)/2) × env_mult
+    d_geom = [
+        math.sqrt((rx_px - tx_px) ** 2 + (rx_py - tx_py) ** 2)
+        for tx_px, tx_py in tx_enu
     ]
-    accuracy_m = math.sqrt(sum(residuals) / n) * env.accuracy_mult
+    H = np.array([
+        [(rx_px - tx_px) / max(d, 1.0), (rx_py - tx_py) / max(d, 1.0)]
+        for (tx_px, tx_py), d in zip(tx_enu, d_geom)
+    ])
+    quality_w = np.array([0.5 if m.best_effort else 1.0 for m in measurements])
+    sigma_r = np.array([max(d, 50.0) * _LOG10_OVER_20 * _SIGMA_RSSI_DB for d in d_geom])
+    W_gdop = np.diag(quality_w / sigma_r ** 2)
+    try:
+        C = np.linalg.inv(H.T @ W_gdop @ H)
+        accuracy_m = math.sqrt((C[0, 0] + C[1, 1]) / 2.0) * env.accuracy_mult
+    except np.linalg.LinAlgError:
+        # Degenerate geometry: fall back to residual-based estimate
+        residuals = [
+            (math.sqrt((rx_px - tx_px) ** 2 + (rx_py - tx_py) ** 2) - d_est) ** 2
+            for (tx_px, tx_py), d_est in zip(tx_enu, distances)
+        ]
+        accuracy_m = math.sqrt(sum(residuals) / len(measurements)) * env.accuracy_mult
 
     if not _geometry_ok([m.lat for m in measurements], [m.lon for m in measurements], lat, lon):
         accuracy_m *= 3.0
@@ -184,14 +206,29 @@ def _solve(
 def trilaterate(
     measurements: list[Measurement],
     origin: tuple[float, float] | None = None,  # unused currently; reserved for future use
+    auto_reject: bool = False,
+    outlier_sigma: float = 2.5,
+    rejected: list[Measurement] | None = None,
 ) -> tuple[float, float, float] | None:
     """Estimate receiver position from a list of RF measurements.
 
     Returns (lat, lon, accuracy_m) or None if fewer than 3 sources are available.
     Never raises.
+
+    Args:
+        auto_reject:   If True, remove measurements whose residual exceeds
+                       ``outlier_sigma`` × MAD of all residuals after a first-pass
+                       solve, then re-solve with the cleaned set.
+        outlier_sigma: Threshold in normalised-MAD units (default 2.5).
+        rejected:      Optional list to collect measurements removed by auto_reject.
     """
     try:
-        return _trilaterate(measurements)
+        return _trilaterate(
+            measurements,
+            auto_reject=auto_reject,
+            outlier_sigma=outlier_sigma,
+            rejected=rejected,
+        )
     except Exception:
         _log.warning("trilaterate() failed", exc_info=True)
         return None
@@ -213,13 +250,46 @@ def _best_per_site(measurements: list[Measurement]) -> list[Measurement]:
     return list(best.values())
 
 
-def _trilaterate(measurements: list[Measurement]) -> tuple[float, float, float] | None:
+def _trilaterate(
+    measurements: list[Measurement],
+    auto_reject: bool = False,
+    outlier_sigma: float = 2.5,
+    rejected: list[Measurement] | None = None,
+) -> tuple[float, float, float] | None:
     measurements = _best_per_site(measurements)
     if len(measurements) < _MIN_SOURCES:
         return None
 
     # Pass 1: solve under OUTDOOR_LOS assumption for a preliminary position
     lat_pre, lon_pre, acc_pre = _solve(measurements, Environment.OUTDOOR_LOS)
+
+    # Optional outlier rejection: remove stations whose residual (|geometric_distance
+    # from solution − RSSI-estimated distance|) is a MAD outlier, then re-solve.
+    if auto_reject:
+        lat0_enu = float(np.mean([m.lat for m in measurements]))
+        lon0_enu = float(np.mean([m.lon for m in measurements]))
+        rx_px_pre, rx_py_pre = _to_enu(lat_pre, lon_pre, lat0_enu, lon0_enu)
+        tx_enu_pre = [_to_enu(m.lat, m.lon, lat0_enu, lon0_enu) for m in measurements]
+        distances_pre = [
+            _rssi_to_distance(m.rssi_dbm, m.power_w, m.antenna_gain_dbi, m.freq_hz, Environment.OUTDOOR_LOS)
+            for m in measurements
+        ]
+        abs_res = [
+            abs(math.sqrt((rx_px_pre - tx_px) ** 2 + (rx_py_pre - tx_py) ** 2) - d_est)
+            for (tx_px, tx_py), d_est in zip(tx_enu_pre, distances_pre)
+        ]
+        med = float(np.median(abs_res))
+        mad = float(np.median([abs(r - med) for r in abs_res]))
+        threshold = med + outlier_sigma * max(mad * 1.4826, 1.0)
+        kept   = [m for m, r in zip(measurements, abs_res) if r <= threshold]
+        removed = [m for m, r in zip(measurements, abs_res) if r > threshold]
+        if len(kept) >= _MIN_SOURCES:
+            if rejected is not None:
+                rejected.extend(removed)
+            measurements = kept
+            lat_pre, lon_pre, acc_pre = _solve(measurements, Environment.OUTDOOR_LOS)
+        else:
+            _log.debug("auto_reject: would drop too many stations (%d kept), skipping", len(kept))
 
     # Compute excess loss for each source using geometric distances from the preliminary fix.
     # rssi_pred at the true geometric distance minus actual rssi gives the extra attenuation

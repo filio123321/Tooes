@@ -73,6 +73,7 @@ def _run_scan_trilaterate(args: argparse.Namespace) -> None:
     sdr = SDRModule(args.catalogue, driver=args.driver, serial=args.serial)
     kf: KalmanFilter | None = KalmanFilter(sigma_a=args.sigma_a) if args.kalman else None
     origin: tuple[float, float] | None = None
+    exclude_ids: set[str] = set(args.exclude) if args.exclude else set()
 
     errors_m: list[float] = []   # actual error per cycle (when ground truth provided)
     accs_m:   list[float] = []   # reported accuracy per cycle
@@ -88,11 +89,37 @@ def _run_scan_trilaterate(args: argparse.Namespace) -> None:
             measurements = sdr.scan(types=args.types or None)
             scan_ms      = (time.perf_counter() - t0) * 1000
 
+            # Manual exclusion: filter before trilateration (and before verbose print)
+            if exclude_ids:
+                excl_shown = [m for m in measurements if m.source_id in exclude_ids]
+                measurements = [m for m in measurements if m.source_id not in exclude_ids]
+
             _print_measurements(measurements, args.verbose)
 
-            t1     = time.perf_counter()
-            result = trilaterate(measurements)
+            if args.verbose and exclude_ids and excl_shown:
+                for m in excl_shown:
+                    print(f"    x{m.source_id:22s}  {m.signal_type:6s}  "
+                          f"{m.freq_hz / 1e6:9.3f} MHz  rssi={m.rssi_dbm:7.2f} dBm  "
+                          f"[manually excluded]")
+
+            t1 = time.perf_counter()
+            auto_rejected: list = []
+            result = trilaterate(
+                measurements,
+                auto_reject=args.auto_reject,
+                outlier_sigma=args.outlier_sigma,
+                rejected=auto_rejected if args.auto_reject else None,
+            )
             tri_ms = (time.perf_counter() - t1) * 1000
+
+            if args.auto_reject and auto_rejected:
+                print(f"  Auto-reject: {len(auto_rejected)} station(s) removed — "
+                      + ", ".join(m.source_id for m in auto_rejected))
+                if args.verbose:
+                    for m in auto_rejected:
+                        print(f"    !{m.source_id:22s}  {m.signal_type:6s}  "
+                              f"{m.freq_hz / 1e6:9.3f} MHz  rssi={m.rssi_dbm:7.2f} dBm  "
+                              f"[outlier — residual exceeded {args.outlier_sigma}σ]")
 
             print(f"  Scan={scan_ms:.0f}ms  Trilaterate={tri_ms:.1f}ms")
 
@@ -245,6 +272,15 @@ def main() -> int:
     p.add_argument("--ground-truth", nargs=2, type=float, metavar=("LAT", "LON"),
                    dest="ground_truth",
                    help="Known position for error reporting, e.g. --ground-truth 42.0117 23.0949")
+    p.add_argument("--exclude",      nargs="+", default=[], metavar="SOURCE_ID",
+                   help="Exclude station(s) by source_id (e.g. FM_91.4_РРС Благоевград); "
+                        "not supported with --full")
+    p.add_argument("--auto-reject", action="store_true", dest="auto_reject",
+                   help="Automatically remove outlier stations by MAD residual; "
+                        "not supported with --full")
+    p.add_argument("--outlier-sigma", type=float, default=2.5, dest="outlier_sigma",
+                   metavar="FLOAT",
+                   help="Outlier rejection threshold in normalised-MAD units (default: 2.5)")
     p.add_argument("--verbose", "-v", action="store_true",
                    help="Show per-signal measurement detail")
     p.add_argument("--log-level",  default="WARNING",
@@ -264,6 +300,8 @@ def main() -> int:
     print(f"  Mode       : {'full pipeline (PositioningSystem)' if args.full else 'scan + trilaterate' + (' + Kalman' if args.kalman else '')}")
     print(f"  Types      : {args.types or 'all'}")
     print(f"  sigma_a    : {args.sigma_a} m/s²")
+    if args.full and (args.exclude or args.auto_reject):
+        print("  Note       : --exclude and --auto-reject are ignored in --full mode")
 
     try:
         if args.full:
