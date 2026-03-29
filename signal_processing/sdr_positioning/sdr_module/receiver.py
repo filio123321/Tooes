@@ -41,6 +41,11 @@ class SDRReceiver:
             args["serial"] = serial
         self._sdr = SoapySDR.Device(args)
         self._sdr.setSampleRate(SOAPY_SDR_RX, 0, _SAMPLE_RATE)
+        # Disable hardware AGC so manual gain control works
+        self._sdr.setGainMode(SOAPY_SDR_RX, 0, False)
+        _gr = self._sdr.getGainRange(SOAPY_SDR_RX, 0)
+        self._gain_min: float = _gr.minimum()
+        self._gain_max: float = _gr.maximum()
         self._stream = self._sdr.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32)
         self._sdr.activateStream(self._stream)
         # Flush ADC pipeline to discard any stale samples
@@ -48,6 +53,7 @@ class SDRReceiver:
         self._sdr.readStream(self._stream, [flush_buf], len(flush_buf))
 
     def set_gain(self, gain_db: float) -> None:
+        gain_db = max(self._gain_min, min(self._gain_max, gain_db))
         self._sdr.setGain(SOAPY_SDR_RX, 0, gain_db)
 
     def set_freq(self, freq_hz: float) -> None:
