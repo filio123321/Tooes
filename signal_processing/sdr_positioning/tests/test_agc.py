@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import pytest
 
-from sdr_positioning.sdr_module.agc import GAIN_STRATEGIES, GainController
-from sdr_positioning.sdr_module.catalogue import TYPE_DEFAULTS
-from sdr_positioning.sdr_module.receiver import SDRReceiverProtocol
-from sdr_positioning.tests.conftest import MockReceiver, NeverSettlingReceiver
+from signal_processing.sdr_positioning.sdr_module.agc import GAIN_STRATEGIES, GainController
+from signal_processing.sdr_positioning.sdr_module.catalogue import TYPE_DEFAULTS
+from signal_processing.sdr_positioning.sdr_module.receiver import SDRReceiverProtocol
+from signal_processing.sdr_positioning.tests.conftest import MockReceiver, NeverSettlingReceiver
 
 
 class TestGainController:

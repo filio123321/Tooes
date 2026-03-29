@@ -57,11 +57,23 @@ python -c "from firmware.hal import get_sweep_source; print(list(get_sweep_sourc
 ```bash
 git submodule update --init --recursive
 
+cat > .env.local <<'EOF'
+INITIAL_L=42.012280,23.095261
+EOF
+
 HAL_BACKEND=grgsm \
 HAL_ROTATION=qmc5883l \
+HAL_ACCEL=mpu6050 \
 HAL_GRGSM_SCANNER_CMD="grgsm_scanner -b GSM900 -a 'driver=sdrplay'" \
 python3 -m firmware.run
 ```
+
+`INITIAL_L` is the absolute starting point used by the firmware navigation
+runtime. The app then uses IMU-based relative movement locally and periodically
+blends in SDR fixes as it moves away from the last anchor.
+
+While it runs, the fused path is also written to `firmware/logs/navigation_trace_*.jsonl`
+unless you disable it with `NAV_PATH_LOG_ENABLED=false`.
 
 ## Required Runtime Assets
 

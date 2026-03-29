@@ -57,6 +57,7 @@ cover/
 
 # Django stuff:
 *.log
+firmware/logs/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -149,6 +150,7 @@ activemq-data/
 
 # Environments
 .env
+.env.local
 .envrc
 .venv
 */.venv

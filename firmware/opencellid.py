@@ -19,6 +19,7 @@ class TowerCoordinatesDict:
 
 
 _logger = logging.getLogger(__name__)
+_warned_missing_csvs: set[Path] = set()
 
 
 def lookup_tower(
@@ -43,8 +44,6 @@ def lookup_tower(
         A dataclass containing 'lat' and 'lon' as floats if the tower is found.
         Returns None if the tower is not present in the database.
 
-    Raises:
-        SystemExit: If the required CSV database file is missing or unreadable.
     """
     # Resolve paths relative to the script location
     script_dir = Path(__file__).resolve().parent
@@ -53,13 +52,14 @@ def lookup_tower(
 
     # Strict check for database existence
     if not csv_path.exists():
-        error_msg = (
-            f"\nCRITICAL ERROR: Database file for country code {mcc} not found.\n"
-            f"Expected location: {csv_path}\n"
-            "Please download the OpenCelliD CSV for this MCC from https://opencellid.org/"
-        )
-        print(error_msg, file=sys.stderr)
-        sys.exit(1)
+        if csv_path not in _warned_missing_csvs:
+            _warned_missing_csvs.add(csv_path)
+            _logger.warning(
+                "OpenCelliD database for MCC %s not found at %s; tower coordinates will be unavailable until that CSV is added.",
+                mcc,
+                csv_path,
+            )
+        return None
 
     try:
         # Convert search parameters to integers once for efficient comparison
@@ -78,11 +78,11 @@ def lookup_tower(
                 return TowerCoordinatesDict(lat=tower.lat, lon=tower.lon)
 
     except PermissionError:
-        print(f"CRITICAL ERROR: Permission denied when accessing {csv_path}", file=sys.stderr)
-        sys.exit(1)
+        _logger.warning("Permission denied when accessing OpenCelliD database %s", csv_path)
+        return None
     except Exception as e:
-        print(f"CRITICAL ERROR: Unexpected error reading database: {e}", file=sys.stderr)
-        sys.exit(1)
+        _logger.warning("Unexpected error reading OpenCelliD database %s: %s", csv_path, e)
+        return None
 
     return None
 

@@ -23,11 +23,11 @@ import sys
 import time
 from pathlib import Path
 
-from sdr_positioning import DEFAULT_CATALOGUE, PositionEstimate, PositioningSystem
-from sdr_positioning.kalman import KalmanFilter, enu_to_latlon, latlon_to_enu
-from sdr_positioning.models import Measurement
-from sdr_positioning.sdr_module import CatalogueLoader, SDRModule
-from sdr_positioning.trilateration import Environment, trilaterate
+from signal_processing.sdr_positioning import DEFAULT_CATALOGUE, PositionEstimate, PositioningSystem
+from signal_processing.sdr_positioning.kalman import KalmanFilter, enu_to_latlon, latlon_to_enu
+from signal_processing.sdr_positioning.models import Measurement
+from signal_processing.sdr_positioning.sdr_module import CatalogueLoader, SDRModule
+from signal_processing.sdr_positioning.trilateration import Environment, trilaterate
 
 logging.basicConfig(format="%(levelname)s %(name)s: %(message)s")
 

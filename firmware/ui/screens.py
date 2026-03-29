@@ -1,11 +1,9 @@
 """Screen renderers for each UI state: boot, tutorial, scanning, map."""
 
-import dataclasses
 from typing import List, Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
-from firmware.hal.types import CellKey
 from firmware.tower_data import CatalogTower
 from firmware.ui.geo import (
     bearing_deg,
@@ -17,6 +15,7 @@ from firmware.ui.geo import (
     MAX_ZOOM,
 )
 from firmware.ui.tiles import render_map_canvas
+from firmware.ui.state import DiscoveredTower, RenderState
 from firmware.ui.icons import (
     draw_user_marker,
     draw_catalog_tower_icon,
@@ -44,21 +43,6 @@ except TypeError:
     except OSError:
         _font_lg = _font
         _font_md = _font
-
-
-# -------------------------------------------------------------------
-# Shared data model
-# -------------------------------------------------------------------
-
-@dataclasses.dataclass
-class DiscoveredTower:
-    """A cell tower found during scanning."""
-
-    key: CellKey
-    lat: Optional[float]
-    lon: Optional[float]
-    best_rssi: float
-    label: str  # "T1", "T2", ...
 
 
 # -------------------------------------------------------------------
@@ -104,14 +88,16 @@ _TUTORIAL_PAGES = [
         ],
     },
     {
-        "title": "READY TO SCAN",
+        "title": "READY TO WALK",
         "lines": [
-            "Scanning for cell towers.",
+            "Start point loads from",
+            ".env.local as INITIAL_L.",
             "",
-            "Slowly rotate 360 degrees",
-            "while holding device level.",
+            "Walk normally to build",
+            "your local trace.",
             "",
-            "More towers = better fix.",
+            "After 25m the SDR fix",
+            "nudges the anchor.",
         ],
     },
 ]
@@ -140,7 +126,7 @@ def render_tutorial(w: int, h: int, page: int) -> Image.Image:
 
     # Footer
     footer = (
-        "Press to start scan >>"
+        "Press to start nav >>"
         if page >= len(_TUTORIAL_PAGES) - 1
         else "Press to continue >>"
     )
@@ -156,8 +142,7 @@ def render_tutorial(w: int, h: int, page: int) -> Image.Image:
 def render_scanning(
     w: int,
     h: int,
-    towers: List[DiscoveredTower],
-    is_done: bool,
+    state: RenderState,
 ) -> Image.Image:
     img = Image.new("L", (w, h), 255)
     draw = ImageDraw.Draw(img)
@@ -165,15 +150,15 @@ def render_scanning(
 
     # Header
     draw.rectangle((0, 0, w - 1, 14), fill=0)
-    header = "SCAN COMPLETE" if is_done else "SCANNING..."
+    header = "SCAN COMPLETE" if state.scan_done else "SCANNING..."
     draw.text((4, 2), header, font=_font, fill=255)
-    count_str = f"{len(towers)} towers"
+    count_str = f"{len(state.towers)} towers"
     cw = draw.textlength(count_str, font=_font)
     draw.text((w - cw - 4, 2), count_str, font=_font, fill=255)
 
     # Tower list (max 7 rows)
-    resolved = [t for t in towers if t.lat is not None]
-    unresolved = [t for t in towers if t.lat is None]
+    resolved = [t for t in state.towers if getattr(t, "lat", None) is not None]
+    unresolved = [t for t in state.towers if getattr(t, "lat", None) is None]
     y = 20
     max_rows = 7
 
@@ -196,7 +181,7 @@ def render_scanning(
         y += 12
 
     # Footer
-    if is_done:
+    if state.scan_done:
         n = len(resolved)
         if n >= 3:
             footer = "Triangulating position..."
@@ -218,54 +203,46 @@ def render_scanning(
 def render_map(
     w: int,
     h: int,
-    user_lat: float,
-    user_lon: float,
-    zoom: int,
-    towers: List[DiscoveredTower],
-    catalog_towers: List[CatalogTower],
-    show_overlay: bool,
-    show_catalog_towers: bool,
-    menu_open: bool,
-    menu_index: int,
+    state: RenderState,
 ) -> Image.Image:
     """PoC-style map render with optional signal overlay."""
-    zoom = clamp(zoom, MIN_ZOOM, MAX_ZOOM)
+    zoom = clamp(state.zoom, MIN_ZOOM, MAX_ZOOM)
 
-    img = render_map_canvas(user_lat, user_lon, zoom, w, h)
+    img = render_map_canvas(state.user_lat, state.user_lon, zoom, w, h)
     draw = ImageDraw.Draw(img)
     draw.rectangle((0, 0, w - 1, h - 1), outline=0)
     draw.rectangle((0, 0, w - 1, 12), fill=255)
     draw.text((4, 2), f"Offline Z:{zoom}", font=_font, fill=0)
-    draw.text((210, 2), "SIG ON" if show_overlay else "SIG OFF", font=_font, fill=0)
+    draw.text((210, 2), "SIG ON" if state.show_overlay else "SIG OFF", font=_font, fill=0)
 
     user_x = w / 2
     user_y = h / 2
-    resolved = [t for t in towers if t.lat is not None]
+    resolved = [t for t in state.towers if getattr(t, "lat", None) is not None]
 
     nearest = None
     nearest_dist = float("inf")
     for t in resolved:
-        d = haversine_km(user_lat, user_lon, t.lat, t.lon)
+        d = haversine_km(state.user_lat, state.user_lon, t.lat, t.lon)
         if d < nearest_dist:
             nearest_dist = d
             nearest = t
 
     nearest_catalog = None
     nearest_catalog_dist = float("inf")
-    for tower in catalog_towers:
-        d = haversine_km(user_lat, user_lon, tower.lat, tower.lon)
+    for tower in state.catalog_towers:
+        d = haversine_km(state.user_lat, state.user_lon, tower.lat, tower.lon)
         if d < nearest_catalog_dist:
             nearest_catalog_dist = d
             nearest_catalog = tower
 
     visible_catalog_towers = []
-    if show_catalog_towers and zoom >= CATALOG_TOWER_MIN_ZOOM:
-        for tower in catalog_towers:
+    if state.show_catalog_towers and zoom >= CATALOG_TOWER_MIN_ZOOM:
+        for tower in state.catalog_towers:
             tower_x, tower_y = latlon_to_screen(
                 tower.lat,
                 tower.lon,
-                user_lat,
-                user_lon,
+                state.user_lat,
+                state.user_lon,
                 zoom,
                 w,
                 h,
@@ -273,7 +250,7 @@ def render_map(
             if point_visible(tower_x, tower_y, w, h):
                 visible_catalog_towers.append(
                     (
-                        haversine_km(user_lat, user_lon, tower.lat, tower.lon),
+                        haversine_km(state.user_lat, state.user_lon, tower.lat, tower.lon),
                         tower,
                         tower_x,
                         tower_y,
@@ -289,8 +266,11 @@ def render_map(
         ):
             draw_catalog_tower_icon(draw, tower_x, tower_y, tower.radio)
 
-    csv_label = "CSV:OFF" if not show_catalog_towers else f"CSV:{len(visible_catalog_towers)}"
+    csv_label = "CSV:OFF" if not state.show_catalog_towers else f"CSV:{len(visible_catalog_towers)}"
     draw.text((112, 2), csv_label, font=_font, fill=0)
+
+    if state.show_trace and len(state.trace_points) >= 2:
+        _draw_trace_overlay(draw, state.trace_points, state.user_lat, state.user_lon, zoom, w, h)
 
     overlay_lat = None
     overlay_lon = None
@@ -303,17 +283,17 @@ def render_map(
         overlay_lat = nearest_catalog.lat
         overlay_lon = nearest_catalog.lon
 
-    if show_overlay and overlay_lat is not None and overlay_lon is not None:
+    if state.show_overlay and overlay_lat is not None and overlay_lon is not None:
         tower_x, tower_y = latlon_to_screen(
             overlay_lat,
             overlay_lon,
-            user_lat,
-            user_lon,
+            state.user_lat,
+            state.user_lon,
             zoom,
             w,
             h,
         )
-        tower_bearing = bearing_deg(user_lat, user_lon, overlay_lat, overlay_lon)
+        tower_bearing = bearing_deg(state.user_lat, state.user_lon, overlay_lat, overlay_lon)
 
         draw_signal_arcs(draw, user_x, user_y, tower_bearing)
         if point_visible(tower_x, tower_y, w, h):
@@ -327,8 +307,8 @@ def render_map(
 
     draw_user_marker(draw, user_x, user_y, None)
 
-    if menu_open:
-        _draw_map_menu(draw, menu_index, show_overlay, show_catalog_towers)
+    if state.menu_open:
+        _draw_map_menu(draw, state.menu_index, state.show_overlay, state.show_catalog_towers, state.show_trace)
 
     return img
 
@@ -343,11 +323,18 @@ def _center_text(draw, width, y, text, font=None):
     draw.text(((width - tw) / 2, y), text, font=f, fill=0)
 
 
-def _draw_map_menu(draw, menu_index: int, show_overlay: bool, show_catalog_towers: bool):
+def _draw_map_menu(
+    draw,
+    menu_index: int,
+    show_overlay: bool,
+    show_catalog_towers: bool,
+    show_trace: bool,
+):
     items = [
         "EXIT",
         f"SIG {'ON' if show_overlay else 'OFF'}",
         f"TWR {'ON' if show_catalog_towers else 'OFF'}",
+        f"TRC {'ON' if show_trace else 'OFF'}",
     ]
 
     origin_x = 6
@@ -390,3 +377,27 @@ def _draw_map_menu(draw, menu_index: int, show_overlay: bool, show_catalog_tower
         tx = x0 + (cell_w - tw) / 2
         ty = y0 + 7
         draw.text((tx, ty), label, font=_font, fill=text_fill)
+
+
+def _draw_trace_overlay(
+    draw,
+    trace_points: list[tuple[float, float]],
+    center_lat: float,
+    center_lon: float,
+    zoom: int,
+    width: int,
+    height: int,
+):
+    """Draw the historical path as a simple polyline on top of the map."""
+    points = []
+    for lat, lon in trace_points:
+        px, py = latlon_to_screen(lat, lon, center_lat, center_lon, zoom, width, height)
+        points.append((px, py))
+
+    if len(points) < 2:
+        return
+
+    draw.line(points, fill=0, width=2)
+    for index, (px, py) in enumerate(points):
+        if index % 4 == 0 or index == len(points) - 1:
+            draw.ellipse((px - 1, py - 1, px + 1, py + 1), fill=0)

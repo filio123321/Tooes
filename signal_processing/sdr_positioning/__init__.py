@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sdr_positioning.fusion import FusionEngine
-from sdr_positioning.models import PositionEstimate
-from sdr_positioning.sdr_module import SDRModule
+from .models import PositionEstimate
 
 # Bundled station catalogue shipped with the package
 DEFAULT_CATALOGUE = Path(__file__).parent / "stations.json"
@@ -15,7 +13,7 @@ class PositioningSystem:
 
     Usage::
 
-        from sdr_positioning import PositioningSystem
+        from signal_processing.sdr_positioning import PositioningSystem
         ps = PositioningSystem("stations.json")   # or pass DEFAULT_CATALOGUE
         ps.feed_imu(ax=0.0, ay=0.0, heading_deg=90.0, dt=0.1)
         estimate = ps.step()
@@ -29,6 +27,9 @@ class PositioningSystem:
         serial: str | None = None,
         sigma_a: float = 0.1,
     ) -> None:
+        from .fusion import FusionEngine
+        from .sdr_module import SDRModule
+
         sdr = SDRModule(catalogue_path, driver=driver, serial=serial)
         self._engine = FusionEngine(sdr, sigma_a)
 

@@ -8,7 +8,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from sdr_positioning.kalman import KalmanFilter, enu_to_latlon, latlon_to_enu
+from signal_processing.sdr_positioning.kalman import KalmanFilter, enu_to_latlon, latlon_to_enu
 
 
 class TestKalmanFilter:
@@ -56,7 +56,7 @@ class TestKalmanFilter:
         # Initialise with a close measurement to tighten P
         kf.update(0.0, 0.0, accuracy_m=10.0)
         # After P is tightened, wait out warm-up: large jump is rejected by normal gate
-        with patch("sdr_positioning.kalman.time") as mock_time:
+        with patch("signal_processing.sdr_positioning.kalman.time") as mock_time:
             mock_time.time.return_value = kf._start_t + 20.0  # past warm-up
             rejected = kf.update(50_000.0, 50_000.0, accuracy_m=10.0)
         assert rejected is False
@@ -66,7 +66,7 @@ class TestKalmanFilter:
         # Mahalanobis d²≈6.48: above normal gate (5.991) but below wide gate (13.816).
         kf = KalmanFilter()
         kf.update(0.0, 0.0, accuracy_m=5.0)  # tighten P to ~25 m²
-        with patch("sdr_positioning.kalman.time") as mock_time:
+        with patch("signal_processing.sdr_positioning.kalman.time") as mock_time:
             mock_time.time.return_value = kf._start_t + 1.0  # within 10s warm-up → wide gate
             accepted = kf.update(18.0, 0.0, accuracy_m=5.0)
         assert accepted is True
@@ -75,7 +75,7 @@ class TestKalmanFilter:
         # Same measurement at z=(18,0) should be rejected when past warm-up
         kf = KalmanFilter()
         kf.update(0.0, 0.0, accuracy_m=5.0)
-        with patch("sdr_positioning.kalman.time") as mock_time:
+        with patch("signal_processing.sdr_positioning.kalman.time") as mock_time:
             mock_time.time.return_value = kf._start_t + 20.0  # past warm-up → normal gate
             rejected = kf.update(18.0, 0.0, accuracy_m=5.0)
         assert rejected is False

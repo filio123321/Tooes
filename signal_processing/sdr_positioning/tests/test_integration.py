@@ -5,12 +5,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from sdr_positioning.tests.conftest import MockReceiver
+from signal_processing.sdr_positioning.tests.conftest import MockReceiver
 
 
 def _make_positioning_system(catalogue_path):
     """Construct PositioningSystem with SoapySDR patched out."""
-    with patch("sdr_positioning.sdr_module.receiver.SoapySDR") as mock_soapy:
+    with patch("signal_processing.sdr_positioning.sdr_module.receiver.SoapySDR") as mock_soapy:
         mock_device = MagicMock()
         mock_soapy.Device.return_value = mock_device
         # readStream needs a .ret attribute for the flush call in SDRReceiver.__init__
@@ -18,7 +18,7 @@ def _make_positioning_system(catalogue_path):
         mock_sr.ret = 0
         mock_device.readStream.return_value = mock_sr
 
-        from sdr_positioning import PositioningSystem
+        from signal_processing.sdr_positioning import PositioningSystem
         ps = PositioningSystem(catalogue_path)
 
     # Replace the real SDRReceiver with a deterministic mock

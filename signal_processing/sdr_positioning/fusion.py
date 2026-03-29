@@ -4,10 +4,10 @@ import logging
 import math
 import time
 
-from sdr_positioning.kalman import KalmanFilter, enu_to_latlon, latlon_to_enu
-from sdr_positioning.models import PositionEstimate
-from sdr_positioning.sdr_module import SDRModule
-from sdr_positioning.trilateration import trilaterate
+from .kalman import KalmanFilter, enu_to_latlon, latlon_to_enu
+from .models import PositionEstimate
+from .sdr_module import SDRModule
+from .trilateration import trilaterate
 
 _log = logging.getLogger(__name__)
 

@@ -194,11 +194,21 @@ ssh team@tooes.local "cd ~/Tooes && git pull"
 ```bash
 ssh team@tooes.local
 cd ~/Tooes
+cat > .env.local <<'EOF'
+INITIAL_L=42.012280,23.095261
+EOF
+
 HAL_BACKEND=grgsm \
   HAL_ROTATION=qmc5883l \
+  HAL_ACCEL=mpu6050 \
   HAL_GRGSM_SCANNER_CMD="grgsm_scanner -b GSM900 -a 'driver=sdrplay'" \
   python3 -m firmware.run
 ```
+
+The runtime starts from `.env.local` via `INITIAL_L=lat,lon`, tracks short-range
+movement with the MPU-6050, and uses SDR fixes as periodic anchor corrections.
+It also writes the fused trace history to `firmware/logs/navigation_trace_*.jsonl`
+by default.
 
 ### 5. Walking-sweep POC (mock radio + real sensors)
 

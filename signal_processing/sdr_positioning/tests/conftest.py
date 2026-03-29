@@ -14,7 +14,7 @@ def catalogue_path() -> Path:
 
 @pytest.fixture
 def catalogue_entries(catalogue_path):
-    from sdr_positioning.sdr_module.catalogue import CatalogueLoader
+    from signal_processing.sdr_positioning.sdr_module.catalogue import CatalogueLoader
     return CatalogueLoader().load(catalogue_path)
 
 
