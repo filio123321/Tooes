@@ -5,8 +5,8 @@ import math
 
 import pytest
 
-from sdr_positioning.models import Measurement
-from sdr_positioning.trilateration import (
+from signal_processing.sdr_positioning.models import Measurement
+from signal_processing.sdr_positioning.trilateration import (
     Environment,
     _classify_environment,
     _geometry_ok,

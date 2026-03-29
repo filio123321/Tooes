@@ -104,14 +104,16 @@ _TUTORIAL_PAGES = [
         ],
     },
     {
-        "title": "READY TO SCAN",
+        "title": "READY TO WALK",
         "lines": [
-            "Scanning for cell towers.",
+            "Start point loads from",
+            ".env.local as INITIAL_L.",
             "",
-            "Slowly rotate 360 degrees",
-            "while holding device level.",
+            "Walk normally to build",
+            "your local trace.",
             "",
-            "More towers = better fix.",
+            "After 25m the SDR fix",
+            "nudges the anchor.",
         ],
     },
 ]
@@ -140,7 +142,7 @@ def render_tutorial(w: int, h: int, page: int) -> Image.Image:
 
     # Footer
     footer = (
-        "Press to start scan >>"
+        "Press to start nav >>"
         if page >= len(_TUTORIAL_PAGES) - 1
         else "Press to continue >>"
     )
@@ -225,6 +227,8 @@ def render_map(
     catalog_towers: List[CatalogTower],
     show_overlay: bool,
     show_catalog_towers: bool,
+    show_trace: bool,
+    trace_points: list[tuple[float, float]],
     menu_open: bool,
     menu_index: int,
 ) -> Image.Image:
@@ -292,6 +296,9 @@ def render_map(
     csv_label = "CSV:OFF" if not show_catalog_towers else f"CSV:{len(visible_catalog_towers)}"
     draw.text((112, 2), csv_label, font=_font, fill=0)
 
+    if show_trace and len(trace_points) >= 2:
+        _draw_trace_overlay(draw, trace_points, user_lat, user_lon, zoom, w, h)
+
     overlay_lat = None
     overlay_lon = None
     overlay_label = "TWR"
@@ -328,7 +335,7 @@ def render_map(
     draw_user_marker(draw, user_x, user_y, None)
 
     if menu_open:
-        _draw_map_menu(draw, menu_index, show_overlay, show_catalog_towers)
+        _draw_map_menu(draw, menu_index, show_overlay, show_catalog_towers, show_trace)
 
     return img
 
@@ -343,11 +350,18 @@ def _center_text(draw, width, y, text, font=None):
     draw.text(((width - tw) / 2, y), text, font=f, fill=0)
 
 
-def _draw_map_menu(draw, menu_index: int, show_overlay: bool, show_catalog_towers: bool):
+def _draw_map_menu(
+    draw,
+    menu_index: int,
+    show_overlay: bool,
+    show_catalog_towers: bool,
+    show_trace: bool,
+):
     items = [
         "EXIT",
         f"SIG {'ON' if show_overlay else 'OFF'}",
         f"TWR {'ON' if show_catalog_towers else 'OFF'}",
+        f"TRC {'ON' if show_trace else 'OFF'}",
     ]
 
     origin_x = 6
@@ -390,3 +404,27 @@ def _draw_map_menu(draw, menu_index: int, show_overlay: bool, show_catalog_tower
         tx = x0 + (cell_w - tw) / 2
         ty = y0 + 7
         draw.text((tx, ty), label, font=_font, fill=text_fill)
+
+
+def _draw_trace_overlay(
+    draw,
+    trace_points: list[tuple[float, float]],
+    center_lat: float,
+    center_lon: float,
+    zoom: int,
+    width: int,
+    height: int,
+):
+    """Draw the historical path as a simple polyline on top of the map."""
+    points = []
+    for lat, lon in trace_points:
+        px, py = latlon_to_screen(lat, lon, center_lat, center_lon, zoom, width, height)
+        points.append((px, py))
+
+    if len(points) < 2:
+        return
+
+    draw.line(points, fill=0, width=2)
+    for index, (px, py) in enumerate(points):
+        if index % 4 == 0 or index == len(points) - 1:
+            draw.ellipse((px - 1, py - 1, px + 1, py + 1), fill=0)

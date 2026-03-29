@@ -16,7 +16,20 @@ from firmware.ui.screens import (
     render_scanning,
     render_map,
 )
-from firmware.hal import get_sweep_source, CellKey
+from firmware.hal import (
+    CellKey,
+    get_accel_reader,
+    get_rotation_reader,
+    get_sweep_source,
+)
+from firmware.navigation import (
+    ImuSampleProcessor,
+    NavigationEngine,
+    NavigationSnapshot,
+    SdrFixProvider,
+    load_navigation_config,
+)
+from firmware.navigation.geo import haversine_m
 from firmware.opencellid import lookup_tower
 from firmware.tower_data import CatalogTower, load_catalog_towers
 
@@ -26,7 +39,7 @@ _log = logging.getLogger(__name__)
 EPD_WIDTH = 296
 EPD_HEIGHT = 128
 DEFAULT_ZOOM = 16
-MAP_MENU_ITEM_COUNT = 3
+MAP_MENU_ITEM_COUNT = 4
 
 # ---- GPIO pins (BCM) for HW-040 rotary encoder ----
 ENCODER_CLK = 5
@@ -45,17 +58,21 @@ class App:
     """Top-level application that drives the e-paper UI."""
 
     def __init__(self):
+        self._repo_root = Path(__file__).resolve().parent.parent.parent
+        self._nav_config = load_navigation_config(self._repo_root)
         self.screen: Screen = Screen.BOOT
         self.tutorial_page: int = 0
         self.zoom: int = DEFAULT_ZOOM
         self.heading_deg: float = 0.0
-        self.user_lat: float = 42.012280  # fallback until trilateration runs
-        self.user_lon: float = 23.095261
+        self.user_lat: float = self._nav_config.initial_lat
+        self.user_lon: float = self._nav_config.initial_lon
+        self.trace_points: List[tuple[float, float]] = []
         self.towers: List[DiscoveredTower] = []
         self.catalog_towers: List[CatalogTower] = load_catalog_towers()
         self.scan_done: bool = False
         self.show_overlay: bool = False
         self.show_catalog_towers: bool = True
+        self.show_trace: bool = False
         self.menu_open: bool = False
         self.menu_index: int = 0
 
@@ -64,6 +81,8 @@ class App:
         self._scan_done_at: Optional[float] = None
         self._button_hold_triggered: bool = False
         self._menu_encoder_steps: int = 0
+        self._navigation: NavigationEngine | None = None
+        self._last_nav_snapshot: NavigationSnapshot | None = None
 
         # Hardware handles (assigned in run())
         self._epd = None
@@ -72,13 +91,13 @@ class App:
         self._compass = None
 
         _log.info("Loaded %s catalog towers for map rendering", len(self.catalog_towers))
+        self.set_user_position(self.user_lat, self.user_lon)
 
     # ----- hardware init -----
 
     def _init_display(self):
-        repo_root = Path(__file__).resolve().parent.parent.parent
         waveshare_lib = (
-            repo_root
+            self._repo_root
             / "external"
             / "waveshare-epd"
             / "RaspberryPi_JetsonNano"
@@ -115,13 +134,54 @@ class App:
 
     def _init_compass(self):
         try:
-            from firmware.hal.qmc5883l import QMC5883LRotationReader
-
-            self._compass = QMC5883LRotationReader()
-            _log.info("Compass initialized (QMC5883L)")
+            self._compass = get_rotation_reader()
+            _log.info(
+                "Rotation reader initialized (%s)",
+                type(self._compass).__name__,
+            )
         except Exception as e:
-            _log.warning("Compass unavailable: %s — heading will stay at 0", e)
+            _log.warning("Rotation reader unavailable: %s — heading will stay at 0", e)
             self._compass = None
+
+    def _init_navigation(self):
+        if not self._compass:
+            _log.warning("Navigation disabled: no rotation reader available")
+            return
+
+        try:
+            accel = get_accel_reader()
+        except Exception as e:
+            _log.warning("Navigation disabled: no accelerometer available (%s)", e)
+            return
+
+        sdr_provider = None
+        if self._nav_config.sdr_enabled:
+            sdr_provider = SdrFixProvider(
+                driver=self._nav_config.sdr_driver,
+                serial=self._nav_config.sdr_serial,
+                catalogue_path=self._nav_config.sdr_catalogue,
+                signal_types=self._nav_config.sdr_types,
+            )
+
+        processor = ImuSampleProcessor(
+            accel=accel,
+            rotation=self._compass,
+            gravity_time_constant_s=self._nav_config.gravity_time_constant_s,
+            linear_smoothing_window=self._nav_config.linear_smoothing_window,
+            stationary_linear_threshold_g=self._nav_config.stationary_linear_threshold_g,
+            stationary_magnitude_threshold_g=self._nav_config.stationary_magnitude_threshold_g,
+        )
+        self._navigation = NavigationEngine(
+            config=self._nav_config,
+            sample_processor=processor,
+            sdr_provider=sdr_provider,
+        )
+        self._apply_navigation_snapshot(self._navigation.snapshot())
+        _log.info(
+            "Navigation initialized from INITIAL_L=%.6f,%.6f",
+            self.user_lat,
+            self.user_lon,
+        )
 
     # ----- button handler -----
 
@@ -133,8 +193,7 @@ class App:
         if self.screen == Screen.TUTORIAL:
             self.tutorial_page += 1
             if self.tutorial_page >= 3:
-                self.screen = Screen.SCANNING
-                self._start_scan()
+                self.screen = Screen.MAP
             self._needs_redraw = True
 
         elif self.screen == Screen.SCANNING and self.scan_done:
@@ -178,6 +237,9 @@ class App:
         elif self.menu_index == 2:
             self.show_catalog_towers = not self.show_catalog_towers
             _log.info("Catalog towers toggled: %s", self.show_catalog_towers)
+        elif self.menu_index == 3:
+            self.show_trace = not self.show_trace
+            _log.info("Trace toggled: %s", self.show_trace)
         self._needs_redraw = True
 
     # ----- scanning -----
@@ -246,11 +308,58 @@ class App:
             wlon += t.lon * w
             total_w += w
         if total_w > 0:
-            self.user_lat = wlat / total_w
-            self.user_lon = wlon / total_w
+            self.set_user_position(wlat / total_w, wlon / total_w)
             _log.info(
                 "Estimated position: %.5f, %.5f", self.user_lat, self.user_lon
             )
+
+    def set_user_position(self, lat: float, lon: float, record_trace: bool = True):
+        self.user_lat = lat
+        self.user_lon = lon
+        if record_trace:
+            self._record_trace_point(lat, lon)
+
+    def _record_trace_point(self, lat: float, lon: float):
+        if self.trace_points:
+            last_lat, last_lon = self.trace_points[-1]
+            if abs(last_lat - lat) < 1e-7 and abs(last_lon - lon) < 1e-7:
+                return
+        self.trace_points.append((lat, lon))
+        if len(self.trace_points) > self._nav_config.trace_max_points:
+            self.trace_points = self.trace_points[-self._nav_config.trace_max_points :]
+
+    def _apply_navigation_snapshot(self, snapshot: NavigationSnapshot):
+        self.heading_deg = snapshot.heading_deg
+        self.user_lat = snapshot.lat
+        self.user_lon = snapshot.lon
+        self.trace_points = list(snapshot.trace_points)
+        self._last_nav_snapshot = snapshot
+
+    def _update_navigation(self, dt_s: float, now_s: float):
+        if self._navigation is None:
+            return
+
+        snapshot = self._navigation.update(dt_s=dt_s, now_s=now_s)
+        previous = self._last_nav_snapshot
+        self._apply_navigation_snapshot(snapshot)
+
+        if previous is None:
+            self._needs_redraw = True
+            return
+
+        moved_m = haversine_m(previous.lat, previous.lon, snapshot.lat, snapshot.lon)
+        heading_delta = abs(snapshot.heading_deg - previous.heading_deg)
+        if heading_delta > 180:
+            heading_delta = 360 - heading_delta
+
+        if (
+            moved_m >= self._nav_config.redraw_distance_m
+            or heading_delta > 15
+            or len(snapshot.trace_points) != len(previous.trace_points)
+            or snapshot.fix_source != previous.fix_source
+            or snapshot.sdr_pending != previous.sdr_pending
+        ):
+            self._needs_redraw = True
 
     # ----- sensor reads -----
 
@@ -337,6 +446,8 @@ class App:
                 self.catalog_towers,
                 self.show_overlay,
                 self.show_catalog_towers,
+                self.show_trace,
+                self.trace_points,
                 self.menu_open,
                 self.menu_index,
             )
@@ -353,6 +464,7 @@ class App:
         self._init_display()
         self._init_controls()
         self._init_compass()
+        self._init_navigation()
 
         # Boot splash
         self.screen = Screen.BOOT
@@ -363,10 +475,13 @@ class App:
         self.screen = Screen.TUTORIAL
         self.tutorial_page = 0
         self._needs_redraw = True
+        prev_time = time.monotonic()
 
         try:
             while True:
-                now = time.time()
+                now = time.monotonic()
+                dt_s = max(now - prev_time, 1e-3)
+                prev_time = now
 
                 # Auto-transition: scanning → map (2 s after scan finishes)
                 if self.screen == Screen.SCANNING:
@@ -383,6 +498,7 @@ class App:
                 # Map-screen controls
                 if self.screen == Screen.MAP:
                     self._read_zoom()
+                    self._update_navigation(dt_s, now)
 
                 # Redraw when state changed
                 if self._needs_redraw:
@@ -394,6 +510,8 @@ class App:
         except KeyboardInterrupt:
             _log.info("Shutting down...")
         finally:
+            if self._navigation:
+                self._navigation.close()
             if self._epd:
                 try:
                     self._epd.sleep()

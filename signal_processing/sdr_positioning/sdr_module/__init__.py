@@ -3,10 +3,10 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from sdr_positioning.models import Measurement
-from sdr_positioning.sdr_module.agc import GainController
-from sdr_positioning.sdr_module.catalogue import CatalogueEntry, CatalogueLoader
-from sdr_positioning.sdr_module.receiver import SDRReceiver, SDRReceiverProtocol
+from ..models import Measurement
+from .agc import GainController
+from .catalogue import CatalogueEntry, CatalogueLoader
+from .receiver import SDRReceiver, SDRReceiverProtocol
 
 _log = logging.getLogger(__name__)
 

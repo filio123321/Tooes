@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from sdr_positioning.models import Measurement, PositionEstimate
-from sdr_positioning.sdr_module.catalogue import CatalogueEntry, CatalogueLoader, TYPE_DEFAULTS
+from signal_processing.sdr_positioning.models import Measurement, PositionEstimate
+from signal_processing.sdr_positioning.sdr_module.catalogue import CatalogueEntry, CatalogueLoader, TYPE_DEFAULTS
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 

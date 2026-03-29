@@ -7,7 +7,7 @@ from enum import Enum
 import numpy as np
 from scipy.optimize import minimize
 
-from sdr_positioning.models import Measurement
+from .models import Measurement
 
 _log = logging.getLogger(__name__)
 

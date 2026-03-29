@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sdr_positioning.models import Measurement
-from sdr_positioning.sdr_module.catalogue import CatalogueEntry
-from sdr_positioning.sdr_module.receiver import SDRReceiverProtocol
+from ..models import Measurement
+from .catalogue import CatalogueEntry
+from .receiver import SDRReceiverProtocol
 
 _MAX_RSSI_DBM = -20.0  # universal upper bound for valid reception
 _AGC_STEPS = 4
