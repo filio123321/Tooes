@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 
@@ -35,6 +36,8 @@ class NavigationConfig:
     sdr_blend_cap: float = 0.35
     sdr_min_interval_s: float = 5.0
     redraw_distance_m: float = 2.0
+    path_log_enabled: bool = False
+    path_log_path: Path | None = None
 
 
 def _read_env_file(path: Path) -> dict[str, str]:
@@ -96,6 +99,20 @@ def load_navigation_config(repo_root: Path | None = None) -> NavigationConfig:
     if catalogue_path and not catalogue_path.is_absolute():
         catalogue_path = repo_root / catalogue_path
 
+    path_log_enabled = _parse_bool(get("NAV_PATH_LOG_ENABLED", "true"), True)
+    path_log_path = None
+    if path_log_enabled:
+        configured_log_path = get("NAV_PATH_LOG_PATH")
+        if configured_log_path:
+            path_log_path = Path(configured_log_path).expanduser()
+            if not path_log_path.is_absolute():
+                path_log_path = repo_root / path_log_path
+        else:
+            stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
+            path_log_path = (
+                repo_root / "firmware" / "logs" / f"navigation_trace_{stamp}.jsonl"
+            )
+
     return NavigationConfig(
         initial_lat=initial_lat,
         initial_lon=initial_lon,
@@ -123,4 +140,6 @@ def load_navigation_config(repo_root: Path | None = None) -> NavigationConfig:
         sdr_blend_cap=float(get("SDR_BLEND_CAP", "0.35")),
         sdr_min_interval_s=float(get("SDR_MIN_INTERVAL_S", "5.0")),
         redraw_distance_m=float(get("NAV_REDRAW_DISTANCE_M", "2.0")),
+        path_log_enabled=path_log_enabled,
+        path_log_path=path_log_path,
     )

@@ -207,6 +207,8 @@ HAL_BACKEND=grgsm \
 
 The runtime starts from `.env.local` via `INITIAL_L=lat,lon`, tracks short-range
 movement with the MPU-6050, and uses SDR fixes as periodic anchor corrections.
+It also writes the fused trace history to `firmware/logs/navigation_trace_*.jsonl`
+by default.
 
 ### 5. Walking-sweep POC (mock radio + real sensors)
 

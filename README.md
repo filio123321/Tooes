@@ -72,6 +72,9 @@ python3 -m firmware.run
 runtime. The app then uses IMU-based relative movement locally and periodically
 blends in SDR fixes as it moves away from the last anchor.
 
+While it runs, the fused path is also written to `firmware/logs/navigation_trace_*.jsonl`
+unless you disable it with `NAV_PATH_LOG_ENABLED=false`.
+
 ## Required Runtime Assets
 
 - `external/waveshare-epd/` must be populated with

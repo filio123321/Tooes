@@ -1,8 +1,10 @@
 from __future__ import annotations
+import json
 from pathlib import Path
 
 from firmware.navigation.config import load_navigation_config
 from firmware.navigation.imu import ProcessedImuSample
+from firmware.navigation.path_logger import PathLogger
 from firmware.navigation.sdr import SdrFix
 from firmware.navigation.service import NavigationEngine
 from firmware.navigation.config import NavigationConfig
@@ -39,6 +41,9 @@ def test_load_navigation_config_reads_env_local(tmp_path: Path, monkeypatch) -> 
     assert config.initial_lat == 42.1
     assert config.initial_lon == 23.2
     assert config.trigger_distance_m == 30.0
+    assert config.path_log_enabled is True
+    assert config.path_log_path is not None
+    assert config.path_log_path.parent == tmp_path / "firmware" / "logs"
 
 
 def test_navigation_engine_detects_distance_trigger() -> None:
@@ -108,3 +113,35 @@ def test_trace_history_is_capped() -> None:
     engine.apply_sdr_fix(SdrFix(lat=42.0003, lon=23.0003, accuracy_m=500.0, n_sources=4))
 
     assert len(engine.snapshot().trace_points) == 3
+
+
+def test_path_logger_writes_jsonl_points(tmp_path: Path) -> None:
+    log_path = tmp_path / "navigation_trace.jsonl"
+    config = NavigationConfig(
+        initial_lat=42.0,
+        initial_lon=23.0,
+        trigger_distance_m=0.5,
+        step_length_m=1.0,
+        peak_threshold_g=0.2,
+        min_step_seconds=0.1,
+    )
+    logger = PathLogger(log_path)
+    engine = NavigationEngine(config, path_logger=logger)
+
+    engine.update_with_sample(_sample(0.0, 0.1))
+    engine.update_with_sample(_sample(0.5, 0.5))
+    engine.update_with_sample(_sample(1.0, 0.1))
+    engine.apply_sdr_fix(
+        SdrFix(lat=42.0005, lon=23.0005, accuracy_m=50.0, n_sources=4)
+    )
+    engine.close()
+
+    rows = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert rows[0]["source"] == "INITIAL"
+    assert any(row["source"] == "IMU" for row in rows)
+    assert rows[-1]["source"] == "RF_BLEND"
+    assert "timestamp_iso" in rows[-1]

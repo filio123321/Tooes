@@ -6,6 +6,7 @@ from firmware.navigation.imu import (
     ProcessedImuSample,
     RelativePathTracker,
 )
+from firmware.navigation.path_logger import PathLogger
 from firmware.navigation.sdr import SdrFix, SdrFixProvider
 from firmware.navigation.service import NavigationEngine, NavigationSnapshot
 from firmware.navigation.trace import TraceHistory, TracePoint
@@ -15,6 +16,7 @@ __all__ = [
     "NavigationConfig",
     "NavigationEngine",
     "NavigationSnapshot",
+    "PathLogger",
     "ProcessedImuSample",
     "RelativePathTracker",
     "SdrFix",

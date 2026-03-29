@@ -26,6 +26,7 @@ from firmware.navigation import (
     ImuSampleProcessor,
     NavigationEngine,
     NavigationSnapshot,
+    PathLogger,
     SdrFixProvider,
     load_navigation_config,
 )
@@ -163,6 +164,11 @@ class App:
                 signal_types=self._nav_config.sdr_types,
             )
 
+        path_logger = None
+        if self._nav_config.path_log_enabled and self._nav_config.path_log_path:
+            path_logger = PathLogger(self._nav_config.path_log_path)
+            _log.info("Path logging to %s", self._nav_config.path_log_path)
+
         processor = ImuSampleProcessor(
             accel=accel,
             rotation=self._compass,
@@ -175,6 +181,7 @@ class App:
             config=self._nav_config,
             sample_processor=processor,
             sdr_provider=sdr_provider,
+            path_logger=path_logger,
         )
         self._apply_navigation_snapshot(self._navigation.snapshot())
         _log.info(

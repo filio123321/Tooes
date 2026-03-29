@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from firmware.navigation.config import NavigationConfig
 from firmware.navigation.geo import clamp, enu_to_latlon, latlon_to_enu
 from firmware.navigation.imu import ImuSampleProcessor, ProcessedImuSample, RelativePathTracker
+from firmware.navigation.path_logger import PathLogger
 from firmware.navigation.sdr import SdrFix, SdrFixProvider
 from firmware.navigation.trace import TraceHistory
 
@@ -38,9 +39,11 @@ class NavigationEngine:
         config: NavigationConfig,
         sample_processor: ImuSampleProcessor | None = None,
         sdr_provider: SdrFixProvider | None = None,
+        path_logger: PathLogger | None = None,
     ) -> None:
         self._config = config
         self._sample_processor = sample_processor
+        self._path_logger = path_logger
         self._path = RelativePathTracker(
             step_length_m=config.step_length_m,
             peak_threshold_g=config.peak_threshold_g,
@@ -65,6 +68,15 @@ class NavigationEngine:
         self._pending_sdr_fix: SdrFix | None = None
         self._sdr_lock = threading.Lock()
         self._closed = False
+        self._log_path_point(
+            lat=self._lat,
+            lon=self._lon,
+            relative_x_m=0.0,
+            relative_y_m=0.0,
+            source="INITIAL",
+            distance_since_anchor_m=0.0,
+            sdr_accuracy_m=None,
+        )
 
     def update(self, dt_s: float, now_s: float | None = None) -> NavigationSnapshot:
         if self._sample_processor is None:
@@ -79,6 +91,7 @@ class NavigationEngine:
         now_s: float | None = None,
     ) -> NavigationSnapshot:
         now_s = sample.timestamp_s if now_s is None else now_s
+        previous_rel_x_m, previous_rel_y_m = self._path.get_position()
         rel_x_m, rel_y_m = self._path.update(sample)
         self._heading_deg = sample.heading_deg
 
@@ -90,6 +103,21 @@ class NavigationEngine:
             self._anchor_lat,
             self._anchor_lon,
         )
+        position_changed = (
+            not math.isclose(rel_x_m, previous_rel_x_m, abs_tol=1e-9)
+            or not math.isclose(rel_y_m, previous_rel_y_m, abs_tol=1e-9)
+        )
+        if position_changed:
+            self._log_path_point(
+                lat=self._lat,
+                lon=self._lon,
+                relative_x_m=rel_x_m,
+                relative_y_m=rel_y_m,
+                source="IMU",
+                distance_since_anchor_m=self.distance_since_anchor_m,
+                sdr_accuracy_m=self._sdr_accuracy_m,
+            )
+
         self._trace.append_if_far_enough(
             self._lat,
             self._lon,
@@ -196,8 +224,42 @@ class NavigationEngine:
         self._fix_source = "RF_BLEND"
         self._sdr_accuracy_m = effective_accuracy_m
         self._trace.append(fused_lat, fused_lon, "RF_BLEND")
+        self._log_path_point(
+            lat=fused_lat,
+            lon=fused_lon,
+            relative_x_m=rel_x_m,
+            relative_y_m=rel_y_m,
+            source="RF_BLEND",
+            distance_since_anchor_m=0.0,
+            sdr_accuracy_m=effective_accuracy_m,
+        )
+
+    def _log_path_point(
+        self,
+        *,
+        lat: float,
+        lon: float,
+        relative_x_m: float,
+        relative_y_m: float,
+        source: str,
+        distance_since_anchor_m: float,
+        sdr_accuracy_m: float | None,
+    ) -> None:
+        if self._path_logger is None:
+            return
+        self._path_logger.log_point(
+            lat=lat,
+            lon=lon,
+            relative_x_m=relative_x_m,
+            relative_y_m=relative_y_m,
+            source=source,
+            distance_since_anchor_m=distance_since_anchor_m,
+            sdr_accuracy_m=sdr_accuracy_m,
+        )
 
     def close(self) -> None:
         self._closed = True
         if self._sdr_provider is not None:
             self._sdr_provider.close()
+        if self._path_logger is not None:
+            self._path_logger.close()
