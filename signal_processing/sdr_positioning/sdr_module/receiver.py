@@ -21,6 +21,7 @@ _SAMPLE_RATE = 2e6
 @runtime_checkable
 class SDRReceiverProtocol(Protocol):
     def set_gain(self, gain_db: float) -> None: ...
+    def get_gain(self) -> float: ...
     def set_freq(self, freq_hz: float) -> None: ...
     def set_sample_rate(self, rate_hz: float) -> None: ...
     def read_power_dbm(self, n_samples: int = _FFT_SIZE) -> float: ...
@@ -53,8 +54,12 @@ class SDRReceiver:
         self._sdr.readStream(self._stream, [flush_buf], len(flush_buf))
 
     def set_gain(self, gain_db: float) -> None:
-        gain_db = max(self._gain_min, min(self._gain_max, gain_db))
-        self._sdr.setGain(SOAPY_SDR_RX, 0, gain_db)
+        self._last_gain = max(self._gain_min, min(self._gain_max, gain_db))
+        self._sdr.setGain(SOAPY_SDR_RX, 0, self._last_gain)
+
+    def get_gain(self) -> float:
+        """Return the gain actually applied by the hardware (clamped to valid range)."""
+        return getattr(self, "_last_gain", 0.0)
 
     def set_freq(self, freq_hz: float) -> None:
         self._sdr.setFrequency(SOAPY_SDR_RX, 0, freq_hz)
