@@ -1,14 +1,14 @@
-import csv
 import sys
 import logging
 import dataclasses
 from pathlib import Path
-from typing import Optional, Dict, Type, Union
+from typing import Optional, Union
 
 if __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from firmware.log_config import configure_logging
+from firmware.tower_data import iter_catalog_towers
 
 
 @dataclasses.dataclass
@@ -68,25 +68,14 @@ def lookup_tower(
         target_lac = int(lac)
         target_cell = int(cell_id)
 
-        with open(csv_path, mode='r', encoding='utf-8', newline='') as f:
-            # OpenCelliD CSVs typically have headers. net=mnc, area=lac, cell=cell_id
-            reader = csv.DictReader(f)
-            
-            for row in reader:
-                try:
-                    # Validate row content before comparison
-                    if (int(row['mcc']) == target_mcc and
-                        int(row['net']) == target_mnc and
-                        int(row['area']) == target_lac and
-                        int(row['cell']) == target_cell):
-                        
-                        return TowerCoordinatesDict(
-                            lat=float(row['lat']),
-                            lon=float(row['lon'])
-                        )
-                except (ValueError, KeyError, TypeError):
-                    # Silently skip rows with missing columns or non-numeric data
-                    continue
+        for tower in iter_catalog_towers(csv_path):
+            if (
+                tower.mcc == target_mcc
+                and tower.net == target_mnc
+                and tower.area == target_lac
+                and tower.cell == target_cell
+            ):
+                return TowerCoordinatesDict(lat=tower.lat, lon=tower.lon)
 
     except PermissionError:
         print(f"CRITICAL ERROR: Permission denied when accessing {csv_path}", file=sys.stderr)
