@@ -100,7 +100,7 @@ _TUTORIAL_PAGES = [
             "Arcs = signal direction",
             "",
             "Zoom: rotate dial",
-            "Press: signal overlay",
+            "Hold: open menu",
         ],
     },
     {
@@ -224,6 +224,9 @@ def render_map(
     towers: List[DiscoveredTower],
     catalog_towers: List[CatalogTower],
     show_overlay: bool,
+    show_catalog_towers: bool,
+    menu_open: bool,
+    menu_index: int,
 ) -> Image.Image:
     """PoC-style map render with optional signal overlay."""
     zoom = clamp(zoom, MIN_ZOOM, MAX_ZOOM)
@@ -256,7 +259,7 @@ def render_map(
             nearest_catalog = tower
 
     visible_catalog_towers = []
-    if zoom >= CATALOG_TOWER_MIN_ZOOM:
+    if show_catalog_towers and zoom >= CATALOG_TOWER_MIN_ZOOM:
         for tower in catalog_towers:
             tower_x, tower_y = latlon_to_screen(
                 tower.lat,
@@ -286,7 +289,8 @@ def render_map(
         ):
             draw_catalog_tower_icon(draw, tower_x, tower_y, tower.radio)
 
-    draw.text((112, 2), f"CSV:{len(visible_catalog_towers)}", font=_font, fill=0)
+    csv_label = "CSV:OFF" if not show_catalog_towers else f"CSV:{len(visible_catalog_towers)}"
+    draw.text((112, 2), csv_label, font=_font, fill=0)
 
     overlay_lat = None
     overlay_lon = None
@@ -323,6 +327,9 @@ def render_map(
 
     draw_user_marker(draw, user_x, user_y, None)
 
+    if menu_open:
+        _draw_map_menu(draw, menu_index, show_overlay, show_catalog_towers)
+
     return img
 
 
@@ -334,3 +341,52 @@ def _center_text(draw, width, y, text, font=None):
     f = font or _font
     tw = draw.textlength(text, font=f)
     draw.text(((width - tw) / 2, y), text, font=f, fill=0)
+
+
+def _draw_map_menu(draw, menu_index: int, show_overlay: bool, show_catalog_towers: bool):
+    items = [
+        "EXIT",
+        f"SIG {'ON' if show_overlay else 'OFF'}",
+        f"TWR {'ON' if show_catalog_towers else 'OFF'}",
+    ]
+
+    origin_x = 6
+    origin_y = 18
+    cell_w = 64
+    cell_h = 22
+    gap_x = 6
+    gap_y = 6
+    cols = 2
+
+    rows = 2
+    panel_w = cols * cell_w + gap_x * (cols - 1) + 8
+    panel_h = rows * cell_h + gap_y * (rows - 1) + 8
+    draw.rounded_rectangle(
+        (origin_x, origin_y, origin_x + panel_w, origin_y + panel_h),
+        radius=4,
+        fill=255,
+        outline=0,
+        width=1,
+    )
+
+    for idx, label in enumerate(items):
+        row = idx // cols
+        col = idx % cols
+        x0 = origin_x + 4 + col * (cell_w + gap_x)
+        y0 = origin_y + 4 + row * (cell_h + gap_y)
+        x1 = x0 + cell_w
+        y1 = y0 + cell_h
+        selected = idx == menu_index
+
+        draw.rounded_rectangle(
+            (x0, y0, x1, y1),
+            radius=3,
+            fill=0 if selected else 255,
+            outline=0,
+            width=1,
+        )
+        text_fill = 255 if selected else 0
+        tw = draw.textlength(label, font=_font)
+        tx = x0 + (cell_w - tw) / 2
+        ty = y0 + 7
+        draw.text((tx, ty), label, font=_font, fill=text_fill)

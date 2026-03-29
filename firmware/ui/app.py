@@ -26,6 +26,7 @@ _log = logging.getLogger(__name__)
 EPD_WIDTH = 296
 EPD_HEIGHT = 128
 DEFAULT_ZOOM = 16
+MAP_MENU_ITEM_COUNT = 3
 
 # ---- GPIO pins (BCM) for HW-040 rotary encoder ----
 ENCODER_CLK = 5
@@ -54,10 +55,15 @@ class App:
         self.catalog_towers: List[CatalogTower] = load_catalog_towers()
         self.scan_done: bool = False
         self.show_overlay: bool = False
+        self.show_catalog_towers: bool = True
+        self.menu_open: bool = False
+        self.menu_index: int = 0
 
         self._needs_redraw: bool = True
         self._tower_counter: int = 0
         self._scan_done_at: Optional[float] = None
+        self._button_hold_triggered: bool = False
+        self._menu_encoder_steps: int = 0
 
         # Hardware handles (assigned in run())
         self._epd = None
@@ -96,8 +102,15 @@ class App:
             a=ENCODER_CLK, b=ENCODER_DT, wrap=False
         )
         self._encoder.steps = 0
-        self._button = Button(ENCODER_SW, pull_up=True, bounce_time=0.2)
-        self._button.when_pressed = self._on_button
+        self._button = Button(
+            ENCODER_SW,
+            pull_up=True,
+            bounce_time=0.2,
+            hold_time=0.7,
+        )
+        self._button.hold_repeat = False
+        self._button.when_released = self._on_button_release
+        self._button.when_held = self._on_button_hold
         _log.info("Controls initialized")
 
     def _init_compass(self):
@@ -112,7 +125,11 @@ class App:
 
     # ----- button handler -----
 
-    def _on_button(self):
+    def _on_button_release(self):
+        if self._button_hold_triggered:
+            self._button_hold_triggered = False
+            return
+
         if self.screen == Screen.TUTORIAL:
             self.tutorial_page += 1
             if self.tutorial_page >= 3:
@@ -126,10 +143,42 @@ class App:
             self.screen = Screen.MAP
             self._needs_redraw = True
 
-        elif self.screen == Screen.MAP:
+        elif self.screen == Screen.MAP and self.menu_open:
+            self._activate_menu_item()
+
+    def _on_button_hold(self):
+        if self.screen != Screen.MAP:
+            return
+
+        self._button_hold_triggered = True
+        if self.menu_open:
+            self._close_menu()
+        else:
+            self._open_menu()
+        self._needs_redraw = True
+
+    def _open_menu(self):
+        self.menu_open = True
+        self.menu_index = 0
+        if self._encoder:
+            self._menu_encoder_steps = int(self._encoder.steps)
+        _log.info("Map menu opened")
+
+    def _close_menu(self):
+        self.menu_open = False
+        self._sync_encoder_to_zoom()
+        _log.info("Map menu closed")
+
+    def _activate_menu_item(self):
+        if self.menu_index == 0:
+            self._close_menu()
+        elif self.menu_index == 1:
             self.show_overlay = not self.show_overlay
-            _log.info("Map overlay toggled: %s", self.show_overlay)
-            self._needs_redraw = True
+            _log.info("Signal marker toggled: %s", self.show_overlay)
+        elif self.menu_index == 2:
+            self.show_catalog_towers = not self.show_catalog_towers
+            _log.info("Catalog towers toggled: %s", self.show_catalog_towers)
+        self._needs_redraw = True
 
     # ----- scanning -----
 
@@ -224,6 +273,11 @@ class App:
     def _read_zoom(self):
         if not self._encoder:
             return
+
+        if self.menu_open:
+            self._read_menu_selection()
+            return
+
         new_zoom = clamp(
             DEFAULT_ZOOM + self._encoder.steps,
             MIN_ZOOM,
@@ -239,6 +293,27 @@ class App:
             self._encoder.steps = min_steps
         elif self._encoder.steps > max_steps:
             self._encoder.steps = max_steps
+
+    def _read_menu_selection(self):
+        if not self._encoder:
+            return
+
+        current_steps = int(self._encoder.steps)
+        delta = current_steps - self._menu_encoder_steps
+        if delta == 0:
+            return
+
+        self.menu_index = (self.menu_index + delta) % MAP_MENU_ITEM_COUNT
+        self._menu_encoder_steps = current_steps
+        self._needs_redraw = True
+
+    def _sync_encoder_to_zoom(self):
+        if not self._encoder:
+            return
+
+        target_steps = self.zoom - DEFAULT_ZOOM
+        self._encoder.steps = target_steps
+        self._menu_encoder_steps = int(self._encoder.steps)
 
     # ----- rendering -----
 
@@ -261,6 +336,9 @@ class App:
                 self.towers,
                 self.catalog_towers,
                 self.show_overlay,
+                self.show_catalog_towers,
+                self.menu_open,
+                self.menu_index,
             )
 
     def _show(self, img):
