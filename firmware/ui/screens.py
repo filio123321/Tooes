@@ -28,7 +28,9 @@ from firmware.ui.icons import (
 )
 
 _font = ImageFont.load_default()
-CATALOG_TOWER_MIN_ZOOM = 15
+# Keep the tower layer hidden when the map gets broad, but let it show up
+# before the user has to zoom into an almost street-level view.
+CATALOG_TOWER_MIN_ZOOM = 14
 
 # Larger font for tutorial/boot screens (Pillow 10.1+, fallback to default)
 try:
@@ -253,6 +255,7 @@ def render_map(
             nearest_catalog_dist = d
             nearest_catalog = tower
 
+    visible_catalog_towers = []
     if zoom >= CATALOG_TOWER_MIN_ZOOM:
         for tower in catalog_towers:
             tower_x, tower_y = latlon_to_screen(
@@ -265,7 +268,25 @@ def render_map(
                 h,
             )
             if point_visible(tower_x, tower_y, w, h):
-                draw_catalog_tower_icon(draw, tower_x, tower_y, tower.radio)
+                visible_catalog_towers.append(
+                    (
+                        haversine_km(user_lat, user_lon, tower.lat, tower.lon),
+                        tower,
+                        tower_x,
+                        tower_y,
+                    )
+                )
+
+        # Draw farthest first so the nearest towers stay visible on top when
+        # several icons land close together on the e-paper display.
+        for _, tower, tower_x, tower_y in sorted(
+            visible_catalog_towers,
+            key=lambda item: item[0],
+            reverse=True,
+        ):
+            draw_catalog_tower_icon(draw, tower_x, tower_y, tower.radio)
+
+    draw.text((112, 2), f"CSV:{len(visible_catalog_towers)}", font=_font, fill=0)
 
     overlay_lat = None
     overlay_lon = None

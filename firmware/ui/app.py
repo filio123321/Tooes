@@ -48,8 +48,8 @@ class App:
         self.tutorial_page: int = 0
         self.zoom: int = DEFAULT_ZOOM
         self.heading_deg: float = 0.0
-        self.user_lat: float = 42.0202  # fallback until trilateration runs
-        self.user_lon: float = 23.0918
+        self.user_lat: float = 42.012280  # fallback until trilateration runs
+        self.user_lon: float = 23.095261
         self.towers: List[DiscoveredTower] = []
         self.catalog_towers: List[CatalogTower] = load_catalog_towers()
         self.scan_done: bool = False
