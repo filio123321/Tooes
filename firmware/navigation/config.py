@@ -16,6 +16,7 @@ _DEFAULT_INITIAL_LON = 23.095261
 class NavigationConfig:
     initial_lat: float
     initial_lon: float
+    update_hz: float = 20.0
     trigger_distance_m: float = 25.0
     trace_point_distance_m: float = 5.0
     trace_max_points: int = 256
@@ -35,6 +36,7 @@ class NavigationConfig:
     sdr_blend_floor: float = 0.05
     sdr_blend_cap: float = 0.35
     sdr_min_interval_s: float = 5.0
+    nav_update_hz: float = 25.0
     redraw_distance_m: float = 2.0
     path_log_enabled: bool = False
     path_log_path: Path | None = None
@@ -116,6 +118,7 @@ def load_navigation_config(repo_root: Path | None = None) -> NavigationConfig:
     return NavigationConfig(
         initial_lat=initial_lat,
         initial_lon=initial_lon,
+        update_hz=float(get("NAV_UPDATE_HZ", "20.0")),
         trigger_distance_m=float(get("NAV_TRIGGER_DISTANCE_M", "25.0")),
         trace_point_distance_m=float(get("NAV_TRACE_POINT_DISTANCE_M", "5.0")),
         trace_max_points=int(get("NAV_TRACE_MAX_POINTS", "256")),
@@ -139,6 +142,7 @@ def load_navigation_config(repo_root: Path | None = None) -> NavigationConfig:
         sdr_blend_floor=float(get("SDR_BLEND_FLOOR", "0.05")),
         sdr_blend_cap=float(get("SDR_BLEND_CAP", "0.35")),
         sdr_min_interval_s=float(get("SDR_MIN_INTERVAL_S", "5.0")),
+        nav_update_hz=float(get("NAV_UPDATE_HZ", "25.0")),
         redraw_distance_m=float(get("NAV_REDRAW_DISTANCE_M", "2.0")),
         path_log_enabled=path_log_enabled,
         path_log_path=path_log_path,

@@ -67,6 +67,7 @@ class NavigationEngine:
         self._last_sdr_request_at = float("-inf")
         self._pending_sdr_fix: SdrFix | None = None
         self._sdr_lock = threading.Lock()
+        self._state_lock = threading.RLock()
         self._closed = False
         self._log_path_point(
             lat=self._lat,
@@ -91,72 +92,76 @@ class NavigationEngine:
         now_s: float | None = None,
     ) -> NavigationSnapshot:
         now_s = sample.timestamp_s if now_s is None else now_s
-        previous_rel_x_m, previous_rel_y_m = self._path.get_position()
-        rel_x_m, rel_y_m = self._path.update(sample)
-        self._heading_deg = sample.heading_deg
+        with self._state_lock:
+            previous_rel_x_m, previous_rel_y_m = self._path.get_position()
+            rel_x_m, rel_y_m = self._path.update(sample)
+            self._heading_deg = sample.heading_deg
 
-        east_m = rel_x_m - self._anchor_rel_x_m
-        north_m = rel_y_m - self._anchor_rel_y_m
-        self._lat, self._lon = enu_to_latlon(
-            east_m,
-            north_m,
-            self._anchor_lat,
-            self._anchor_lon,
-        )
-        position_changed = (
-            not math.isclose(rel_x_m, previous_rel_x_m, abs_tol=1e-9)
-            or not math.isclose(rel_y_m, previous_rel_y_m, abs_tol=1e-9)
-        )
-        if position_changed:
-            self._log_path_point(
+            east_m = rel_x_m - self._anchor_rel_x_m
+            north_m = rel_y_m - self._anchor_rel_y_m
+            self._lat, self._lon = enu_to_latlon(
+                east_m,
+                north_m,
+                self._anchor_lat,
+                self._anchor_lon,
+            )
+            position_changed = (
+                not math.isclose(rel_x_m, previous_rel_x_m, abs_tol=1e-9)
+                or not math.isclose(rel_y_m, previous_rel_y_m, abs_tol=1e-9)
+            )
+            if position_changed:
+                self._log_path_point(
+                    lat=self._lat,
+                    lon=self._lon,
+                    relative_x_m=rel_x_m,
+                    relative_y_m=rel_y_m,
+                    source="IMU",
+                    distance_since_anchor_m=self.distance_since_anchor_m,
+                    sdr_accuracy_m=self._sdr_accuracy_m,
+                )
+
+            self._trace.append_if_far_enough(
+                self._lat,
+                self._lon,
+                self._config.trace_point_distance_m,
+                "IMU",
+            )
+
+            self._consume_pending_sdr_fix()
+            self._maybe_request_sdr(now_s)
+            return self.snapshot()
+
+    def snapshot(self) -> NavigationSnapshot:
+        with self._state_lock:
+            rel_x_m, rel_y_m = self._path.get_position()
+            return NavigationSnapshot(
                 lat=self._lat,
                 lon=self._lon,
+                heading_deg=self._heading_deg,
                 relative_x_m=rel_x_m,
                 relative_y_m=rel_y_m,
-                source="IMU",
                 distance_since_anchor_m=self.distance_since_anchor_m,
+                trace_points=tuple(self._trace.as_tuples()),
+                fix_source=self._fix_source,
+                sdr_pending=self._sdr_pending,
                 sdr_accuracy_m=self._sdr_accuracy_m,
             )
 
-        self._trace.append_if_far_enough(
-            self._lat,
-            self._lon,
-            self._config.trace_point_distance_m,
-            "IMU",
-        )
-
-        self._consume_pending_sdr_fix()
-        self._maybe_request_sdr(now_s)
-        return self.snapshot()
-
-    def snapshot(self) -> NavigationSnapshot:
-        rel_x_m, rel_y_m = self._path.get_position()
-        return NavigationSnapshot(
-            lat=self._lat,
-            lon=self._lon,
-            heading_deg=self._heading_deg,
-            relative_x_m=rel_x_m,
-            relative_y_m=rel_y_m,
-            distance_since_anchor_m=self.distance_since_anchor_m,
-            trace_points=tuple(self._trace.as_tuples()),
-            fix_source=self._fix_source,
-            sdr_pending=self._sdr_pending,
-            sdr_accuracy_m=self._sdr_accuracy_m,
-        )
-
     @property
     def distance_since_anchor_m(self) -> float:
-        return self._path.distance_from(self._anchor_rel_x_m, self._anchor_rel_y_m)
+        with self._state_lock:
+            return self._path.distance_from(self._anchor_rel_x_m, self._anchor_rel_y_m)
 
     def needs_sdr_scan(self, now_s: float | None = None) -> bool:
-        if self._sdr_provider is None or self._closed:
-            return False
-        now_s = time.monotonic() if now_s is None else now_s
-        if self._sdr_pending:
-            return False
-        if self.distance_since_anchor_m < self._config.trigger_distance_m:
-            return False
-        return (now_s - self._last_sdr_request_at) >= self._config.sdr_min_interval_s
+        with self._state_lock:
+            if self._sdr_provider is None or self._closed:
+                return False
+            now_s = time.monotonic() if now_s is None else now_s
+            if self._sdr_pending:
+                return False
+            if self._path.distance_from(self._anchor_rel_x_m, self._anchor_rel_y_m) < self._config.trigger_distance_m:
+                return False
+            return (now_s - self._last_sdr_request_at) >= self._config.sdr_min_interval_s
 
     def _maybe_request_sdr(self, now_s: float) -> None:
         if not self.needs_sdr_scan(now_s):
@@ -189,50 +194,52 @@ class NavigationEngine:
         self.apply_sdr_fix(fix)
 
     def apply_sdr_fix(self, fix: SdrFix) -> None:
-        rel_x_m, rel_y_m = self._path.get_position()
-        effective_accuracy_m = max(
-            fix.accuracy_m,
-            self._config.sdr_confidence_radius_m,
-        )
+        with self._state_lock:
+            rel_x_m, rel_y_m = self._path.get_position()
+            effective_accuracy_m = max(
+                fix.accuracy_m,
+                self._config.sdr_confidence_radius_m,
+            )
 
-        predicted_lat = self._lat
-        predicted_lon = self._lon
-        delta_east_m, delta_north_m = latlon_to_enu(
-            fix.lat,
-            fix.lon,
-            predicted_lat,
-            predicted_lon,
-        )
-        weight = clamp(
-            self.distance_since_anchor_m / max(effective_accuracy_m, 1.0),
-            self._config.sdr_blend_floor,
-            self._config.sdr_blend_cap,
-        )
-        fused_lat, fused_lon = enu_to_latlon(
-            delta_east_m * weight,
-            delta_north_m * weight,
-            predicted_lat,
-            predicted_lon,
-        )
+            predicted_lat = self._lat
+            predicted_lon = self._lon
+            delta_east_m, delta_north_m = latlon_to_enu(
+                fix.lat,
+                fix.lon,
+                predicted_lat,
+                predicted_lon,
+            )
+            weight = clamp(
+                self._path.distance_from(self._anchor_rel_x_m, self._anchor_rel_y_m)
+                / max(effective_accuracy_m, 1.0),
+                self._config.sdr_blend_floor,
+                self._config.sdr_blend_cap,
+            )
+            fused_lat, fused_lon = enu_to_latlon(
+                delta_east_m * weight,
+                delta_north_m * weight,
+                predicted_lat,
+                predicted_lon,
+            )
 
-        self._anchor_lat = fused_lat
-        self._anchor_lon = fused_lon
-        self._anchor_rel_x_m = rel_x_m
-        self._anchor_rel_y_m = rel_y_m
-        self._lat = fused_lat
-        self._lon = fused_lon
-        self._fix_source = "RF_BLEND"
-        self._sdr_accuracy_m = effective_accuracy_m
-        self._trace.append(fused_lat, fused_lon, "RF_BLEND")
-        self._log_path_point(
-            lat=fused_lat,
-            lon=fused_lon,
-            relative_x_m=rel_x_m,
-            relative_y_m=rel_y_m,
-            source="RF_BLEND",
-            distance_since_anchor_m=0.0,
-            sdr_accuracy_m=effective_accuracy_m,
-        )
+            self._anchor_lat = fused_lat
+            self._anchor_lon = fused_lon
+            self._anchor_rel_x_m = rel_x_m
+            self._anchor_rel_y_m = rel_y_m
+            self._lat = fused_lat
+            self._lon = fused_lon
+            self._fix_source = "RF_BLEND"
+            self._sdr_accuracy_m = effective_accuracy_m
+            self._trace.append(fused_lat, fused_lon, "RF_BLEND")
+            self._log_path_point(
+                lat=fused_lat,
+                lon=fused_lon,
+                relative_x_m=rel_x_m,
+                relative_y_m=rel_y_m,
+                source="RF_BLEND",
+                distance_since_anchor_m=0.0,
+                sdr_accuracy_m=effective_accuracy_m,
+            )
 
     def _log_path_point(
         self,
