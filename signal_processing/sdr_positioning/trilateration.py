@@ -130,6 +130,7 @@ _SIGMA_RSSI_DB = 3.0   # assumed RSSI measurement noise (dB); drives GDOP accura
 def _solve(
     measurements: list[Measurement],
     env: Environment,
+    origin: tuple[float, float] | None = None,
 ) -> tuple[float, float, float]:
     """Run Nelder-Mead weighted least-squares solver for a given environment.
 
@@ -144,8 +145,11 @@ def _solve(
         for m, d in zip(measurements, distances)
     ]
 
-    lat0 = float(np.mean([m.lat for m in measurements]))
-    lon0 = float(np.mean([m.lon for m in measurements]))
+    if origin is None:
+        lat0 = float(np.mean([m.lat for m in measurements]))
+        lon0 = float(np.mean([m.lon for m in measurements]))
+    else:
+        lat0, lon0 = origin
 
     tx_enu = [_to_enu(m.lat, m.lon, lat0, lon0) for m in measurements]
 
@@ -158,10 +162,13 @@ def _solve(
         return total
 
     w_sum = sum(weights)
-    x0 = np.array([
-        sum(w * px for (px, _), w in zip(tx_enu, weights)) / w_sum,
-        sum(w * py for (_, py), w in zip(tx_enu, weights)) / w_sum,
-    ])
+    if origin is None:
+        x0 = np.array([
+            sum(w * px for (px, _), w in zip(tx_enu, weights)) / w_sum,
+            sum(w * py for (_, py), w in zip(tx_enu, weights)) / w_sum,
+        ])
+    else:
+        x0 = np.array([0.0, 0.0])
 
     result = minimize(cost, x0, method="Nelder-Mead",
                       options={"maxiter": 2000, "xatol": 1.0, "fatol": 1.0})
@@ -205,7 +212,7 @@ def _solve(
 
 def trilaterate(
     measurements: list[Measurement],
-    origin: tuple[float, float] | None = None,  # unused currently; reserved for future use
+    origin: tuple[float, float] | None = None,
     auto_reject: bool = False,
     outlier_sigma: float = 2.5,
     rejected: list[Measurement] | None = None,
@@ -225,6 +232,7 @@ def trilaterate(
     try:
         return _trilaterate(
             measurements,
+            origin=origin,
             auto_reject=auto_reject,
             outlier_sigma=outlier_sigma,
             rejected=rejected,
@@ -252,6 +260,7 @@ def _best_per_site(measurements: list[Measurement]) -> list[Measurement]:
 
 def _trilaterate(
     measurements: list[Measurement],
+    origin: tuple[float, float] | None = None,
     auto_reject: bool = False,
     outlier_sigma: float = 2.5,
     rejected: list[Measurement] | None = None,
@@ -261,13 +270,16 @@ def _trilaterate(
         return None
 
     # Pass 1: solve under OUTDOOR_LOS assumption for a preliminary position
-    lat_pre, lon_pre, acc_pre = _solve(measurements, Environment.OUTDOOR_LOS)
+    lat_pre, lon_pre, acc_pre = _solve(measurements, Environment.OUTDOOR_LOS, origin=origin)
 
     # Optional outlier rejection: remove stations whose residual (|geometric_distance
     # from solution − RSSI-estimated distance|) is a MAD outlier, then re-solve.
     if auto_reject:
-        lat0_enu = float(np.mean([m.lat for m in measurements]))
-        lon0_enu = float(np.mean([m.lon for m in measurements]))
+        if origin is None:
+            lat0_enu = float(np.mean([m.lat for m in measurements]))
+            lon0_enu = float(np.mean([m.lon for m in measurements]))
+        else:
+            lat0_enu, lon0_enu = origin
         rx_px_pre, rx_py_pre = _to_enu(lat_pre, lon_pre, lat0_enu, lon0_enu)
         tx_enu_pre = [_to_enu(m.lat, m.lon, lat0_enu, lon0_enu) for m in measurements]
         distances_pre = [
@@ -287,7 +299,11 @@ def _trilaterate(
             if rejected is not None:
                 rejected.extend(removed)
             measurements = kept
-            lat_pre, lon_pre, acc_pre = _solve(measurements, Environment.OUTDOOR_LOS)
+            lat_pre, lon_pre, acc_pre = _solve(
+                measurements,
+                Environment.OUTDOOR_LOS,
+                origin=origin,
+            )
         else:
             _log.debug("auto_reject: would drop too many stations (%d kept), skipping", len(kept))
 
@@ -306,7 +322,7 @@ def _trilaterate(
         return lat_pre, lon_pre, acc_pre  # already solved with the correct environment
 
     # Pass 2: re-solve with the detected environment
-    return _solve(measurements, env)
+    return _solve(measurements, env, origin=origin)
 
 
 def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

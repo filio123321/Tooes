@@ -13,10 +13,15 @@ _log = logging.getLogger(__name__)
 
 
 class FusionEngine:
-    def __init__(self, sdr: SDRModule, sigma_a: float = 0.1) -> None:
+    def __init__(
+        self,
+        sdr: SDRModule,
+        sigma_a: float = 0.1,
+        origin: tuple[float, float] | None = None,
+    ) -> None:
         self._sdr = sdr
         self._kf  = KalmanFilter(sigma_a)
-        self._origin: tuple[float, float] | None = None  # (lat, lon) of first accepted RF fix
+        self._origin = origin
         self._last_rf_time = 0.0
 
     def feed_imu(

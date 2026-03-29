@@ -10,6 +10,7 @@ Usage
   python3 sdr_tuning.py --kalman                 # add Kalman filter to smooth fixes
   python3 sdr_tuning.py --full                   # use PositioningSystem facade (no raw output)
   python3 sdr_tuning.py --cycles 10              # stop after N cycles
+  python3 sdr_tuning.py --origin 42.01 23.09     # provide a prior origin / checkpoint
   python3 sdr_tuning.py --driver rtlsdr          # different SDR driver
   python3 sdr_tuning.py --catalogue my.json -v   # custom catalogue, verbose
 """
@@ -72,7 +73,7 @@ def _run_scan_trilaterate(args: argparse.Namespace) -> None:
     """Core loop: SDRModule.scan() → trilaterate() with optional KalmanFilter."""
     sdr = SDRModule(args.catalogue, driver=args.driver, serial=args.serial)
     kf: KalmanFilter | None = KalmanFilter(sigma_a=args.sigma_a) if args.kalman else None
-    origin: tuple[float, float] | None = None
+    origin = args.origin
     exclude_ids: set[str] = set(args.exclude) if args.exclude else set()
 
     errors_m: list[float] = []   # actual error per cycle (when ground truth provided)
@@ -106,6 +107,7 @@ def _run_scan_trilaterate(args: argparse.Namespace) -> None:
             auto_rejected: list = []
             result = trilaterate(
                 measurements,
+                origin=origin,
                 auto_reject=args.auto_reject,
                 outlier_sigma=args.outlier_sigma,
                 rejected=auto_rejected if args.auto_reject else None,
@@ -191,6 +193,7 @@ def _run_full_pipeline(args: argparse.Namespace) -> None:
         driver=args.driver,
         serial=args.serial,
         sigma_a=args.sigma_a,
+        origin=args.origin,
     )
     errors_m: list[float] = []
     accs_m:   list[float] = []
@@ -272,6 +275,8 @@ def main() -> int:
     p.add_argument("--ground-truth", nargs=2, type=float, metavar=("LAT", "LON"),
                    dest="ground_truth",
                    help="Known position for error reporting, e.g. --ground-truth 42.0117 23.0949")
+    p.add_argument("--origin", nargs=2, type=float, metavar=("LAT", "LON"),
+                   help="Initial origin hint for trilateration / fusion, e.g. --origin 42.0117 23.0949")
     p.add_argument("--exclude",      nargs="+", default=[], metavar="SOURCE_ID",
                    help="Exclude station(s) by source_id (e.g. FM_91.4_РРС Благоевград); "
                         "not supported with --full")
@@ -290,6 +295,8 @@ def main() -> int:
 
     if args.ground_truth:
         args.ground_truth = (args.ground_truth[0], args.ground_truth[1])
+    if args.origin:
+        args.origin = (args.origin[0], args.origin[1])
 
     logging.getLogger("sdr_positioning").setLevel(args.log_level)
 

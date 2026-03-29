@@ -122,6 +122,19 @@ class TestSolver:
         error_m = math.sqrt(dlat ** 2 + dlon ** 2)
         assert error_m < 100.0, f"Position error {error_m:.0f} m exceeds 100 m"
 
+    def test_origin_hint_is_accepted_and_keeps_accuracy(self):
+        measurements = self._synthetic_measurements(n=4, noise_db=0.0)
+        result = trilaterate(
+            measurements,
+            origin=(self.RX_LAT + 0.01, self.RX_LON - 0.01),
+        )
+        assert result is not None
+        lat, lon, _ = result
+        dlat = (lat - self.RX_LAT) * 110540
+        dlon = (lon - self.RX_LON) * 111320 * math.cos(math.radians(self.RX_LAT))
+        error_m = math.sqrt(dlat ** 2 + dlon ** 2)
+        assert error_m < 100.0, f"Position error {error_m:.0f} m exceeds 100 m with origin hint"
+
     def test_returns_none_for_fewer_than_3_sources(self):
         measurements = self._synthetic_measurements(n=2)
         assert trilaterate(measurements) is None

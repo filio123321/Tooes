@@ -65,7 +65,11 @@ class SdrFixProvider:
             self._failed = True
             return False
 
-    def scan_once(self) -> SdrFix | None:
+    def scan_once(
+        self,
+        *,
+        origin: tuple[float, float] | None = None,
+    ) -> SdrFix | None:
         if not self._ensure_runtime():
             return None
 
@@ -73,7 +77,7 @@ class SdrFixProvider:
         assert self._trilaterate is not None
 
         measurements = self._sdr_module.scan(types=self._signal_types)
-        result = self._trilaterate(measurements)
+        result = self._trilaterate(measurements, origin=origin)
         if result is None:
             return None
 

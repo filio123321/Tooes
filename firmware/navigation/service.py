@@ -167,16 +167,19 @@ class NavigationEngine:
         if not self.needs_sdr_scan(now_s):
             return
 
+        with self._state_lock:
+            origin = (self._anchor_lat, self._anchor_lon)
+
         self._sdr_pending = True
         self._last_sdr_request_at = now_s
-        worker = threading.Thread(target=self._run_sdr_scan, daemon=True)
+        worker = threading.Thread(target=self._run_sdr_scan, args=(origin,), daemon=True)
         worker.start()
 
-    def _run_sdr_scan(self) -> None:
+    def _run_sdr_scan(self, origin: tuple[float, float]) -> None:
         fix: SdrFix | None = None
         try:
             if self._sdr_provider is not None:
-                fix = self._sdr_provider.scan_once()
+                fix = self._sdr_provider.scan_once(origin=origin)
         except Exception:
             _log.warning("SDR scan failed", exc_info=True)
         finally:

@@ -26,12 +26,13 @@ class PositioningSystem:
         driver: str = "sdrplay",
         serial: str | None = None,
         sigma_a: float = 0.1,
+        origin: tuple[float, float] | None = None,
     ) -> None:
         from .fusion import FusionEngine
         from .sdr_module import SDRModule
 
         sdr = SDRModule(catalogue_path, driver=driver, serial=serial)
-        self._engine = FusionEngine(sdr, sigma_a)
+        self._engine = FusionEngine(sdr, sigma_a, origin=origin)
 
     def feed_imu(
         self,

@@ -57,6 +57,8 @@ def test_load_navigation_config_reads_env_local(tmp_path: Path, monkeypatch) -> 
     assert os.environ["HAL_ROTATION"] == "qmc5883l"
     assert os.environ["HAL_TILT"] == "mpu6050"
     assert os.environ["HAL_ACCEL"] == "mpu6050"
+    assert config.update_hz == 50.0
+    assert config.redraw_distance_m == 0.75
 
 
 def test_navigation_engine_detects_distance_trigger() -> None:
@@ -112,6 +114,36 @@ def test_navigation_engine_blends_sdr_fix_and_resets_anchor() -> None:
     assert after.lat != before_lat or after.lon != before_lon
     assert after.distance_since_anchor_m == 0.0
     assert after.sdr_accuracy_m == 500.0
+
+
+def test_navigation_engine_passes_anchor_as_sdr_origin() -> None:
+    class FakeProvider:
+        def __init__(self) -> None:
+            self.origins: list[tuple[float, float] | None] = []
+
+        def scan_once(self, *, origin=None):
+            self.origins.append(origin)
+            return SdrFix(lat=42.0001, lon=23.0001, accuracy_m=10.0, n_sources=4)
+
+    config = NavigationConfig(
+        initial_lat=42.0,
+        initial_lon=23.0,
+        trigger_distance_m=0.5,
+        step_length_m=1.0,
+        peak_threshold_g=0.2,
+        min_step_seconds=0.1,
+    )
+    provider = FakeProvider()
+    engine = NavigationEngine(config, sdr_provider=provider)
+
+    engine.update_with_sample(_sample(0.0, 0.1), now_s=0.0)
+    engine.update_with_sample(_sample(0.5, 0.5), now_s=0.5)
+    engine.update_with_sample(_sample(1.0, 0.1), now_s=1.0)
+    import time
+    time.sleep(0.05)
+    engine.update_with_sample(_sample(1.5, 0.1, stationary=True), now_s=1.5)
+
+    assert provider.origins == [(42.0, 23.0)]
 
 
 def test_trace_history_is_capped() -> None:

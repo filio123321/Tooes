@@ -139,6 +139,7 @@ class FirmwareOrchestrator:
             return
 
         self._navigation = navigation
+        _log.info("Navigation loop running at %.1f Hz", self._nav_config.update_hz)
         prev_time = time.monotonic()
         while not self._stop_event.is_set():
             now = time.monotonic()
