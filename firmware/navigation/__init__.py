@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from firmware.navigation.config import NavigationConfig, load_navigation_config
+from firmware.navigation.config import (
+    NavigationConfig,
+    apply_env_file,
+    load_navigation_config,
+)
 from firmware.navigation.imu import (
     ImuSampleProcessor,
     ProcessedImuSample,
@@ -31,6 +35,7 @@ __all__ = [
     "SdrFixProvider",
     "TraceHistory",
     "TracePoint",
+    "apply_env_file",
     "load_navigation_config",
 ]
 

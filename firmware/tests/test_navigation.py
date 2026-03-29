@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import os
 from pathlib import Path
 
 from firmware.navigation.config import load_navigation_config
@@ -31,8 +32,17 @@ def _sample(
 
 def test_load_navigation_config_reads_env_local(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("INITIAL_L", raising=False)
+    monkeypatch.delenv("HAL_ROTATION", raising=False)
+    monkeypatch.delenv("HAL_TILT", raising=False)
+    monkeypatch.delenv("HAL_ACCEL", raising=False)
     (tmp_path / ".env.local").write_text(
-        "INITIAL_L=42.1000,23.2000\nNAV_TRIGGER_DISTANCE_M=30\n",
+        (
+            "INITIAL_L=42.1000,23.2000\n"
+            "NAV_TRIGGER_DISTANCE_M=30\n"
+            "HAL_ROTATION=qmc5883l\n"
+            "HAL_TILT=mpu6050\n"
+            "HAL_ACCEL=mpu6050\n"
+        ),
         encoding="utf-8",
     )
 
@@ -44,6 +54,9 @@ def test_load_navigation_config_reads_env_local(tmp_path: Path, monkeypatch) -> 
     assert config.path_log_enabled is True
     assert config.path_log_path is not None
     assert config.path_log_path.parent == tmp_path / "firmware" / "logs"
+    assert os.environ["HAL_ROTATION"] == "qmc5883l"
+    assert os.environ["HAL_TILT"] == "mpu6050"
+    assert os.environ["HAL_ACCEL"] == "mpu6050"
 
 
 def test_navigation_engine_detects_distance_trigger() -> None:

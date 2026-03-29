@@ -56,6 +56,15 @@ def _read_env_file(path: Path) -> dict[str, str]:
     return values
 
 
+def apply_env_file(repo_root: Path | None = None) -> dict[str, str]:
+    """Load `.env.local` into ``os.environ`` without overriding shell exports."""
+    repo_root = repo_root or Path(__file__).resolve().parents[2]
+    env_file_values = _read_env_file(repo_root / ".env.local")
+    for key, value in env_file_values.items():
+        os.environ.setdefault(key, value)
+    return env_file_values
+
+
 def _parse_bool(value: str | None, default: bool) -> bool:
     if value is None:
         return default
@@ -85,7 +94,7 @@ def _parse_initial_location(value: str | None) -> tuple[float, float]:
 
 def load_navigation_config(repo_root: Path | None = None) -> NavigationConfig:
     repo_root = repo_root or Path(__file__).resolve().parents[2]
-    env_file_values = _read_env_file(repo_root / ".env.local")
+    env_file_values = apply_env_file(repo_root)
 
     def get(name: str, default: str | None = None) -> str | None:
         if name in os.environ:
