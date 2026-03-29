@@ -12,7 +12,6 @@ _font = ImageFont.load_default()
 USER_RADIUS = 5
 TOWER_BODY_W = 10
 TOWER_BODY_H = 16
-MAP_TOWER_RADIUS = 4
 SIGNAL_RADII = [12, 18, 24]
 EDGE_ARROW_LEN = 14
 EDGE_ARROW_WING = 6
@@ -73,34 +72,6 @@ def draw_tower_icon(draw, x, y, label="TWR"):
     draw.arc((cx - 11, cy - 11, cx + 11, cy + 11), 300, 60, fill=0, width=2)
     # Label
     draw.text((x + 8, y + 6), label, font=_font, fill=0)
-
-
-def draw_catalog_tower_icon(draw, x, y, radio):
-    """Draw a compact map icon whose shape depends on the tower radio type."""
-    x = int(round(x))
-    y = int(round(y))
-    r = MAP_TOWER_RADIUS
-    radio = (radio or "OTHER").upper()
-
-    if radio == "LTE":
-        draw.polygon(
-            [(x, y - r - 1), (x - r, y + r - 1), (x + r, y + r - 1)],
-            outline=0,
-            fill=255,
-        )
-    elif radio == "UMTS":
-        draw.ellipse((x - r, y - r, x + r, y + r), outline=0, width=1, fill=255)
-    elif radio == "GSM":
-        draw.rectangle((x - r, y - r, x + r, y + r), outline=0, width=1, fill=255)
-    else:
-        draw.polygon(
-            [(x, y - r - 1), (x - r, y), (x, y + r + 1), (x + r, y)],
-            outline=0,
-            fill=255,
-        )
-
-    draw.line((x, y + r, x, y + r + 4), fill=0, width=1)
-    draw.line((x - 2, y + r + 4, x + 2, y + r + 4), fill=0, width=1)
 
 
 def draw_signal_arcs(draw, x, y, bearing_deg):

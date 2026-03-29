@@ -19,7 +19,6 @@ from firmware.ui.screens import (
 )
 from firmware.hal import get_sweep_source, CellKey
 from firmware.opencellid import lookup_tower
-from firmware.tower_data import CatalogTower, load_catalog_towers
 
 _log = logging.getLogger(__name__)
 
@@ -53,9 +52,7 @@ class App:
         self.user_lat: float = 42.0202  # fallback until trilateration runs
         self.user_lon: float = 23.0918
         self.towers: List[DiscoveredTower] = []
-        self.catalog_towers: List[CatalogTower] = load_catalog_towers()
         self.scan_done: bool = False
-        self.show_overlay: bool = False
 
         self._needs_redraw: bool = True
         self._tower_counter: int = 0
@@ -66,8 +63,6 @@ class App:
         self._encoder = None
         self._button = None
         self._compass = None
-
-        _log.info("Loaded %s catalog towers for map rendering", len(self.catalog_towers))
 
     # ----- hardware init -----
 
@@ -126,11 +121,6 @@ class App:
             # Skip the auto-transition timer — jump to map now
             self._finish_scan()
             self.screen = Screen.MAP
-            self._needs_redraw = True
-
-        elif self.screen == Screen.MAP:
-            self.show_overlay = not self.show_overlay
-            _log.info("Map overlay toggled: %s", self.show_overlay)
             self._needs_redraw = True
 
     # ----- scanning -----
@@ -260,9 +250,8 @@ class App:
                 self.user_lat,
                 self.user_lon,
                 self.zoom,
+                self.heading_deg,
                 self.towers,
-                self.catalog_towers,
-                self.show_overlay,
             )
 
     def _show(self, img):
@@ -288,6 +277,8 @@ class App:
         self.tutorial_page = 0
         self._needs_redraw = True
 
+        last_heading_check = 0.0
+
         try:
             while True:
                 now = time.time()
@@ -304,9 +295,13 @@ class App:
                         self.screen = Screen.MAP
                         self._needs_redraw = True
 
-                # Map-screen controls
+                # Map-screen sensors
                 if self.screen == Screen.MAP:
                     self._read_zoom()
+                    if now - last_heading_check > 1.0:
+                        if self._read_heading():
+                            self._needs_redraw = True
+                        last_heading_check = now
 
                 # Redraw when state changed
                 if self._needs_redraw:

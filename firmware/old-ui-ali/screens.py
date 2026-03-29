@@ -6,7 +6,6 @@ from typing import List, Optional
 from PIL import Image, ImageDraw, ImageFont
 
 from firmware.hal.types import CellKey
-from firmware.tower_data import CatalogTower
 from firmware.ui.geo import (
     bearing_deg,
     bearing_to_text,
@@ -19,7 +18,6 @@ from firmware.ui.geo import (
 from firmware.ui.tiles import render_map_canvas
 from firmware.ui.icons import (
     draw_user_marker,
-    draw_catalog_tower_icon,
     draw_tower_icon,
     draw_signal_arcs,
     draw_link_line,
@@ -28,7 +26,6 @@ from firmware.ui.icons import (
 )
 
 _font = ImageFont.load_default()
-CATALOG_TOWER_MIN_ZOOM = 15
 
 # Larger font for tutorial/boot screens (Pillow 10.1+, fallback to default)
 try:
@@ -94,11 +91,10 @@ _TUTORIAL_PAGES = [
         "title": "READING THE MAP",
         "lines": [
             "(+) = Your position",
-            "Shapes = GSM/UMTS/LTE",
-            "Arcs = signal direction",
+            "/|\\ = Cell tower",
+            " >> = Nearest tower",
             "",
             "Zoom: rotate dial",
-            "Press: signal overlay",
         ],
     },
     {
@@ -219,24 +215,25 @@ def render_map(
     user_lat: float,
     user_lon: float,
     zoom: int,
+    heading_deg: float,
     towers: List[DiscoveredTower],
-    catalog_towers: List[CatalogTower],
-    show_overlay: bool,
 ) -> Image.Image:
-    """PoC-style map render with optional signal overlay."""
+    """Full map render: tiles + towers + user marker + nearest-tower bar."""
     zoom = clamp(zoom, MIN_ZOOM, MAX_ZOOM)
 
+    # Tile canvas
     img = render_map_canvas(user_lat, user_lon, zoom, w, h)
     draw = ImageDraw.Draw(img)
-    draw.rectangle((0, 0, w - 1, h - 1), outline=0)
-    draw.rectangle((0, 0, w - 1, 12), fill=255)
-    draw.text((4, 2), f"Offline Z:{zoom}", font=_font, fill=0)
-    draw.text((210, 2), "SIG ON" if show_overlay else "SIG OFF", font=_font, fill=0)
 
-    user_x = w / 2
-    user_y = h / 2
+    # Border
+    draw.rectangle((0, 0, w - 1, h - 1), outline=0)
+
+    user_x, user_y = w / 2, h / 2
+
+    # Resolved towers with known coordinates
     resolved = [t for t in towers if t.lat is not None]
 
+    # Find nearest tower
     nearest = None
     nearest_dist = float("inf")
     for t in resolved:
@@ -245,43 +242,57 @@ def render_map(
             nearest_dist = d
             nearest = t
 
-    if zoom >= CATALOG_TOWER_MIN_ZOOM:
-        for tower in catalog_towers:
-            tower_x, tower_y = latlon_to_screen(
-                tower.lat,
-                tower.lon,
-                user_lat,
-                user_lon,
-                zoom,
-                w,
-                h,
-            )
-            if point_visible(tower_x, tower_y, w, h):
-                draw_catalog_tower_icon(draw, tower_x, tower_y, tower.radio)
-
-    if show_overlay and nearest:
-        tower_x, tower_y = latlon_to_screen(
-            nearest.lat,
-            nearest.lon,
-            user_lat,
-            user_lon,
-            zoom,
-            w,
-            h,
+    # Draw towers
+    for t in resolved:
+        tx, ty = latlon_to_screen(
+            t.lat, t.lon, user_lat, user_lon, zoom, w, h
         )
-        tower_bearing = bearing_deg(user_lat, user_lon, nearest.lat, nearest.lon)
+        tower_brg = bearing_deg(user_lat, user_lon, t.lat, t.lon)
 
-        draw_signal_arcs(draw, user_x, user_y, tower_bearing)
-        if point_visible(tower_x, tower_y, w, h):
-            draw_tower_icon(draw, tower_x, tower_y, nearest.label)
-            draw_link_line(draw, user_x, user_y, tower_x, tower_y)
+        if point_visible(tx, ty, w, h):
+            draw_tower_icon(draw, tx, ty, t.label)
+            draw_link_line(draw, user_x, user_y, tx, ty)
         else:
-            draw_edge_arrow(draw, w, h, tower_bearing, nearest.label)
+            draw_edge_arrow(draw, w, h, tower_brg, t.label)
 
-        draw.rectangle((100, 0, 208, 12), fill=255)
-        draw.text((102, 2), f"DIR:{bearing_to_text(tower_bearing)}", font=_font, fill=0)
+    # Signal arcs toward nearest tower
+    if nearest:
+        nb = bearing_deg(user_lat, user_lon, nearest.lat, nearest.lon)
+        draw_signal_arcs(draw, user_x, user_y, nb)
 
-    draw_user_marker(draw, user_x, user_y, None)
+    # User marker (always on top)
+    draw_user_marker(draw, user_x, user_y, heading_deg)
+
+    # ---- Top bar ----
+    draw.rectangle((0, 0, w - 1, 12), fill=255)
+    draw.line((0, 12, w - 1, 12), fill=0)
+
+    lat_hemi = "N" if user_lat >= 0 else "S"
+    lon_hemi = "E" if user_lon >= 0 else "W"
+    top_left = f"Z:{zoom} {abs(user_lat):.4f}{lat_hemi} {abs(user_lon):.4f}{lon_hemi}"
+    draw.text((4, 2), top_left, font=_font, fill=0)
+
+    hdg_str = f"HDG:{int(heading_deg) % 360:03d}"
+    hw = draw.textlength(hdg_str, font=_font)
+    draw.text((w - hw - 4, 2), hdg_str, font=_font, fill=0)
+
+    # ---- Bottom bar: nearest tower ----
+    if nearest:
+        draw.rectangle((0, h - 14, w - 1, h - 1), fill=255)
+        draw.line((0, h - 14, w - 1, h - 14), fill=0)
+
+        nb = bearing_deg(user_lat, user_lon, nearest.lat, nearest.lon)
+        dir_txt = bearing_to_text(nb)
+        dist_str = (
+            f"{nearest_dist * 1000:.0f}m"
+            if nearest_dist < 1
+            else f"{nearest_dist:.1f}km"
+        )
+        bar = (
+            f">> {nearest.label}: {dist_str} {dir_txt}  "
+            f"{nearest.best_rssi:.0f}dBm"
+        )
+        draw.text((4, h - 12), bar, font=_font, fill=0)
 
     return img
 
