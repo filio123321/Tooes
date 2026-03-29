@@ -245,6 +245,14 @@ def render_map(
             nearest_dist = d
             nearest = t
 
+    nearest_catalog = None
+    nearest_catalog_dist = float("inf")
+    for tower in catalog_towers:
+        d = haversine_km(user_lat, user_lon, tower.lat, tower.lon)
+        if d < nearest_catalog_dist:
+            nearest_catalog_dist = d
+            nearest_catalog = tower
+
     if zoom >= CATALOG_TOWER_MIN_ZOOM:
         for tower in catalog_towers:
             tower_x, tower_y = latlon_to_screen(
@@ -259,24 +267,35 @@ def render_map(
             if point_visible(tower_x, tower_y, w, h):
                 draw_catalog_tower_icon(draw, tower_x, tower_y, tower.radio)
 
-    if show_overlay and nearest:
+    overlay_lat = None
+    overlay_lon = None
+    overlay_label = "TWR"
+    if nearest:
+        overlay_lat = nearest.lat
+        overlay_lon = nearest.lon
+        overlay_label = nearest.label
+    elif nearest_catalog:
+        overlay_lat = nearest_catalog.lat
+        overlay_lon = nearest_catalog.lon
+
+    if show_overlay and overlay_lat is not None and overlay_lon is not None:
         tower_x, tower_y = latlon_to_screen(
-            nearest.lat,
-            nearest.lon,
+            overlay_lat,
+            overlay_lon,
             user_lat,
             user_lon,
             zoom,
             w,
             h,
         )
-        tower_bearing = bearing_deg(user_lat, user_lon, nearest.lat, nearest.lon)
+        tower_bearing = bearing_deg(user_lat, user_lon, overlay_lat, overlay_lon)
 
         draw_signal_arcs(draw, user_x, user_y, tower_bearing)
         if point_visible(tower_x, tower_y, w, h):
-            draw_tower_icon(draw, tower_x, tower_y, nearest.label)
+            draw_tower_icon(draw, tower_x, tower_y, overlay_label)
             draw_link_line(draw, user_x, user_y, tower_x, tower_y)
         else:
-            draw_edge_arrow(draw, w, h, tower_bearing, nearest.label)
+            draw_edge_arrow(draw, w, h, tower_bearing, overlay_label)
 
         draw.rectangle((100, 0, 208, 12), fill=255)
         draw.text((102, 2), f"DIR:{bearing_to_text(tower_bearing)}", font=_font, fill=0)
