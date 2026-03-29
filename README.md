@@ -1,4 +1,4 @@
-# ![TOOES](assets/images/tooes_logo.png)
+# ![TOOES](./assets/images/tooes_logo.png)
 
 Tooes is a Raspberry Pi-based passive RF navigation prototype. The firmware
 listens to broadcast cellular signals, resolves observed towers against a local
